@@ -1,0 +1,13 @@
+{
+  "name": "credential-reaper",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI-powered machine identity investigation and safe credential retirement platform",
+  "scripts": {
+    "dev:web": "pnpm --filter @credential-reaper/web dev",
+    "dev:api": "pnpm --filter @credential-reaper/api dev",
+    "build:web": "pnpm --filter @credential-reaper/web build",
+    "build:shared": "pnpm --filter @credential-reaper/shared build",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}
