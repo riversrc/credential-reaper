@@ -1,0 +1,19 @@
+{
+  "name": "@credential-reaper/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@credential-reaper/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261107.1",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.158.0"
+  }
+}

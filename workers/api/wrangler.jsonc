@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "credential-reaper-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  // Secrets (set with `wrangler secret put NVIDIA_API_KEY`), never committed:
+  //   NVIDIA_API_KEY - NVIDIA Nemotron API key. If unset, the worker falls
+  //   back to a deterministic mock AI provider automatically.
+  "vars": {
+    "ENVIRONMENT": "development"
+  }
+}
