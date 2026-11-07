@@ -1,0 +1,271 @@
+:root {
+  --bg: #0b0e14;
+  --bg-elevated: #12161f;
+  --border: #232838;
+  --text: #e4e7ee;
+  --text-dim: #8a90a3;
+  --accent: #6ee7b7;
+  --accent-dim: #2d5c48;
+
+  --critical: #ff5c7a;
+  --critical-bg: #3a1620;
+  --high: #ffa94d;
+  --high-bg: #3a2712;
+  --medium: #ffd43b;
+  --medium-bg: #3a3315;
+  --low: #6ee7b7;
+  --low-bg: #16342a;
+
+  font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sidebar-brand {
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 0 0.5rem 1rem;
+  color: var(--text);
+}
+
+.sidebar-brand .skull {
+  color: var(--accent);
+}
+
+.nav-link {
+  display: block;
+  padding: 0.55rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.nav-link:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.nav-link.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.main {
+  flex: 1;
+  padding: 1.75rem 2rem;
+  max-width: 1200px;
+}
+
+.page-header {
+  margin-bottom: 1.25rem;
+}
+
+.page-header p {
+  color: var(--text-dim);
+  margin: 0.15rem 0 0;
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+th {
+  color: var(--text-dim);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+tbody tr {
+  cursor: pointer;
+}
+
+tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.badge-critical {
+  background: var(--critical-bg);
+  color: var(--critical);
+}
+
+.badge-high {
+  background: var(--high-bg);
+  color: var(--high);
+}
+
+.badge-medium {
+  background: var(--medium-bg);
+  color: var(--medium);
+}
+
+.badge-low {
+  background: var(--low-bg);
+  color: var(--low);
+}
+
+.badge-neutral {
+  background: var(--border);
+  color: var(--text-dim);
+}
+
+.btn {
+  background: var(--accent);
+  color: #0b0e14;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+select,
+input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.mono {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 0.82rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--border);
+}
+
+.timeline li {
+  position: relative;
+  padding: 0 0 1.1rem 1.1rem;
+}
+
+.timeline li::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.timeline .ts {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
+.empty-state {
+  color: var(--text-dim);
+  padding: 2rem 0;
+  text-align: center;
+}
+
+.back-link {
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}

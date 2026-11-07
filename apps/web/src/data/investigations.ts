@@ -1,0 +1,133 @@
+import type { Investigation } from '@credential-reaper/shared';
+
+export const investigations: Investigation[] = [
+  {
+    id: 'inv-001',
+    identityId: 'id-005',
+    identityName: 'old-slack-integration',
+    status: 'completed',
+    startedAt: '2026-11-01T10:00:00Z',
+    completedAt: '2026-11-01T10:02:14Z',
+    requestedBy: 'workspace.river@gmail.com',
+    source: 'mock',
+    recommendedAction: 'retire',
+    aiSummary:
+      'This OAuth app has workspace-wide Slack admin scope but has not been used in over 3 years. Its original owner no longer appears in the directory. No active service depends on it. Recommend immediate retirement.',
+    findings: [
+      {
+        id: 'find-001',
+        category: 'ownership',
+        severity: 'critical',
+        description: 'No active owner on record; last known owner has left the organization.',
+        evidence: 'Owner field resolves to a deactivated directory account.',
+      },
+      {
+        id: 'find-002',
+        category: 'over-permissioning',
+        severity: 'high',
+        description: 'Grant includes workspace-wide admin scope far beyond any observed usage pattern.',
+        evidence: 'Only "slack.post_message" was ever invoked; admin and channels.all scopes are unused.',
+      },
+      {
+        id: 'find-003',
+        category: 'dormancy',
+        severity: 'high',
+        description: 'No usage recorded in 3.5 years.',
+        evidence: 'Last usage event: 2023-05-02T11:00:00Z.',
+      },
+    ],
+  },
+  {
+    id: 'inv-002',
+    identityId: 'id-009',
+    identityName: 'deprecated-webhook-relay',
+    status: 'completed',
+    startedAt: '2026-11-02T09:15:00Z',
+    completedAt: '2026-11-02T09:16:40Z',
+    requestedBy: 'workspace.river@gmail.com',
+    source: 'mock',
+    recommendedAction: 'retire',
+    aiSummary:
+      'This webhook relay forwards signup events to a third-party tool that was decommissioned in 2022. The last invocation failed and no dependent service references it. Safe to retire.',
+    findings: [
+      {
+        id: 'find-004',
+        category: 'dormancy',
+        severity: 'critical',
+        description: 'No successful invocation in over 4 years.',
+        evidence: 'Only usage event on record is a failure from 2022-01-15.',
+      },
+      {
+        id: 'find-005',
+        category: 'dependency',
+        severity: 'info',
+        description: 'No downstream services declare a dependency on this identity.',
+        evidence: 'Dependency graph scan returned zero consumers.',
+      },
+    ],
+  },
+  {
+    id: 'inv-003',
+    identityId: 'id-012',
+    identityName: 'contractor-api-key-q3',
+    status: 'completed',
+    startedAt: '2026-11-03T14:00:00Z',
+    completedAt: '2026-11-03T14:01:52Z',
+    requestedBy: 'workspace.river@gmail.com',
+    source: 'mock',
+    recommendedAction: 'rotate',
+    aiSummary:
+      'This key was issued for a fixed-term contractor engagement that ended in Q3 2024. The credential metadata shows an expiration date that has passed, yet the identity is still marked active. Recommend immediate rotation and review of offboarding process.',
+    findings: [
+      {
+        id: 'find-006',
+        category: 'offboarding-risk',
+        severity: 'high',
+        description: 'Credential expiration date has passed but identity status was never updated.',
+        evidence: 'credential.expiresAt = 2024-10-01, identity.status = stale (not retired).',
+      },
+      {
+        id: 'find-007',
+        category: 'scope',
+        severity: 'medium',
+        description: 'Grant includes staging deploy access broader than typical contractor scope.',
+        evidence: 'Permission "staging-cluster::deploy" was used only twice, both near contract end.',
+      },
+    ],
+  },
+  {
+    id: 'inv-004',
+    identityId: 'id-002',
+    identityName: 'legacy-etl-bot',
+    status: 'completed',
+    startedAt: '2026-11-04T08:30:00Z',
+    completedAt: '2026-11-04T08:32:05Z',
+    requestedBy: 'workspace.river@gmail.com',
+    source: 'mock',
+    recommendedAction: 'migrate',
+    aiSummary:
+      'This bot account was superseded by an Airflow-managed pipeline in early 2025 but retains write access to the staging warehouse. Recommend migrating any remaining references to the new pipeline identity before retirement.',
+    findings: [
+      {
+        id: 'find-008',
+        category: 'migration-gap',
+        severity: 'medium',
+        description: 'Replacement pipeline exists but this identity still holds active write grants.',
+        evidence: 'No usage since 2025-02-11; grant "warehouse::staging write" remains unrevoked.',
+      },
+    ],
+  },
+  {
+    id: 'inv-005',
+    identityId: 'id-006',
+    identityName: 'backup-ssh-key-prod01',
+    status: 'running',
+    startedAt: '2026-11-07T17:40:00Z',
+    completedAt: null,
+    requestedBy: 'workspace.river@gmail.com',
+    source: 'mock',
+    recommendedAction: null,
+    aiSummary: null,
+    findings: [],
+  },
+];
