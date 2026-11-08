@@ -207,28 +207,17 @@
   stroke-dasharray: 3 7;
 }
 
-.dust {
-  fill: var(--signal);
-  fill-opacity: 0.3;
-}
-
-.dust-link {
-  fill: none;
-  stroke: var(--signal);
-  stroke-opacity: 0.08;
-}
-
 .map-link {
   fill: none;
   stroke: var(--signal);
-  stroke-opacity: 0.3;
+  stroke-opacity: 0.12;
   stroke-width: 1;
   transition: stroke-opacity 200ms var(--ease-out), stroke-width 200ms var(--ease-out);
 }
 
 .map-link.is-threat {
   stroke: var(--critical);
-  stroke-opacity: 0.7;
+  stroke-opacity: 0.45;
   stroke-dasharray: 1;
   animation: draw-link 1.4s var(--ease-out) 1;
 }
@@ -239,7 +228,7 @@
 }
 
 .map-link.is-faded {
-  stroke-opacity: 0.08;
+  stroke-opacity: 0.04;
 }
 
 .map-link.is-dim {
@@ -248,10 +237,6 @@
 
 .map-link.is-hidden {
   stroke-opacity: 0;
-}
-
-.map-pulse {
-  fill: var(--signal);
 }
 
 @keyframes draw-link {

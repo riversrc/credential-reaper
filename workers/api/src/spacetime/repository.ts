@@ -164,7 +164,8 @@ export async function fetchAuditEvents(env: SpacetimeEnv): Promise<AuditEvent[]>
 }
 
 export async function fetchRemediationPlans(env: SpacetimeEnv): Promise<RemediationPlan[]> {
-  return sqlQuery<RemediationPlan>(env, 'SELECT * FROM v_remediation_plan');
+  const rows = await sqlQuery<RemediationPlan>(env, 'SELECT * FROM v_remediation_plan');
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function fetchRemediationPlan(env: SpacetimeEnv, id: string): Promise<RemediationPlan | null> {

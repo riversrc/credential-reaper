@@ -31,14 +31,13 @@ export interface GraphLink {
 export interface Graph {
   nodes: GraphNode[];
   links: GraphLink[];
-  dust: { x: number; y: number }[];
-  dustLinks: string[];
   cx: number;
   cy: number;
   rings: { rx: number; ry: number }[];
 }
 
 const DAY = 86_400_000;
+const OUTER_SCALE = 0.8;
 export const STALE_AFTER_DAYS = 90;
 
 /** FNV-1a, mapped to [0, 1). Layout is seeded from identity ids so it is identical on every load. */
@@ -71,17 +70,21 @@ export function buildGraph(
   const cx = w / 2;
   const cy = h / 2;
   const narrow = w < 560;
-  const rx = Math.max(60, cx - (narrow ? 82 : 110));
-  const ry = Math.max(60, cy - (narrow ? 58 : 62));
+  const rx = Math.max(60, cx - (narrow ? 50 : 64));
+  const ry = Math.max(60, cy - (narrow ? 50 : 52));
 
   const sorted = [...identities].sort((a, b) => hash01(a.id) - hash01(b.id) || a.id.localeCompare(b.id));
   const n = sorted.length;
   const nodes: GraphNode[] = [];
   const byId = new Map<string, GraphNode>();
 
+  // Identities sit on two staggered outer rings; owner/team/dependency hubs settle in the open middle.
   sorted.forEach((identity, i) => {
-    const angle = -Math.PI / 2 + 0.35 + ((i + (hash01(`${identity.id}a`) - 0.5) * 0.3) * 2 * Math.PI) / Math.max(n, 1);
-    const scale = i % 2 === 0 ? 1 : 0.78;
+    const ring = i % 2;
+    const inRing = ring === 0 ? Math.ceil(n / 2) : Math.floor(n / 2);
+    const slot = Math.floor(i / 2) + ring * 0.5 + (hash01(`${identity.id}a`) - 0.5) * 0.2;
+    const angle = -Math.PI / 2 + (slot * 2 * Math.PI) / Math.max(inRing, 1);
+    const scale = ring === 0 ? 1 : OUTER_SCALE;
     const node: GraphNode = {
       id: `i:${identity.id}`,
       kind: 'identity',
@@ -138,7 +141,7 @@ export function buildGraph(
     hub.x = targets[i].x;
     hub.y = targets[i].y;
   });
-  const minGap = narrow ? 44 : 58;
+  const minGap = narrow ? 26 : 34;
   const ids = nodes.filter((nd) => nd.kind === 'identity');
   for (let pass = 0; pass < 90; pass++) {
     hubs.forEach((hub, i) => {
@@ -147,7 +150,7 @@ export function buildGraph(
     });
     for (let a = 0; a < hubs.length; a++) {
       for (let b = a + 1; b < hubs.length; b++) separate(hubs[a], hubs[b], minGap, 0.5);
-      for (const fixed of ids) separate(hubs[a], fixed, minGap + 14, 1);
+      for (const fixed of ids) separate(hubs[a], fixed, minGap + 10, 1);
     }
   }
   for (const hub of hubs) {
@@ -164,28 +167,7 @@ export function buildGraph(
     straight: `M${identity.x.toFixed(1)} ${identity.y.toFixed(1)} L${hub.x.toFixed(1)} ${hub.y.toFixed(1)}`,
   }));
 
-  // Unlabelled ambient texture: never interactive, never counted anywhere.
-  const dust: { x: number; y: number }[] = [];
-  for (let i = 0; dust.length < (narrow ? 14 : 30) && i < 200; i++) {
-    const x = 16 + hash01(`dx${i}`) * (w - 32);
-    const y = 16 + hash01(`dy${i}`) * (h - 32);
-    if (nodes.every((nd) => Math.hypot(nd.x - x, nd.y - y) > 64)) dust.push({ x, y });
-  }
-  const dustLinks: string[] = [];
-  dust.forEach((p, i) => {
-    let best = -1;
-    let bestD = 150;
-    dust.forEach((q, j) => {
-      const d = Math.hypot(p.x - q.x, p.y - q.y);
-      if (j !== i && d < bestD) {
-        best = j;
-        bestD = d;
-      }
-    });
-    if (best >= 0 && i % 2 === 0) dustLinks.push(curve(p.x, p.y, dust[best].x, dust[best].y, `dl${i}`));
-  });
-
-  return { nodes, links: graphLinks, dust, dustLinks, cx, cy, rings: [0.4, 0.78, 1, 1.32].map((k) => ({ rx: rx * k, ry: ry * k })) };
+  return { nodes, links: graphLinks, cx, cy, rings: [0.5, OUTER_SCALE, 1].map((k) => ({ rx: rx * k, ry: ry * k })) };
 }
 
 function separate(a: GraphNode, b: GraphNode, min: number, shareA: number) {

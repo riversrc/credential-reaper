@@ -30,7 +30,7 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
   const nodeRefs = useRef<Record<string, SVGGElement | null>>({});
 
   const w = Math.max(width, 280);
-  const h = w < 560 ? Math.round(w * 1.15) : Math.min(620, Math.max(440, Math.round(w * 0.6)));
+  const h = w < 560 ? Math.round(w * 1.4) : Math.min(700, Math.max(520, Math.round(w * 0.82)));
   const graph = useMemo(() => buildGraph(identities, details, w, h), [identities, details, w, h]);
   const labelMax = w < 560 ? 16 : 24;
 
@@ -88,12 +88,6 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
             {graph.rings.map((r, i) => (
               <ellipse key={i} className="map-ring" cx={graph.cx} cy={graph.cy} rx={r.rx} ry={r.ry} />
             ))}
-            {graph.dustLinks.map((d, i) => (
-              <path key={i} d={d} className="dust-link" />
-            ))}
-            {graph.dust.map((p, i) => (
-              <rect key={i} x={p.x - 1.5} y={p.y - 1.5} width={3} height={3} className="dust" />
-            ))}
           </g>
 
           <g aria-hidden="true">
@@ -113,14 +107,7 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
                 .filter(Boolean)
                 .join(' ');
               return (
-                <g key={link.id}>
-                  <path className={cls} d={lit ? link.straight : link.d} pathLength={1} />
-                  {!reduced && state === 'active' && !dimmedIds.has(identity.id) && !threat && (
-                    <circle className="map-pulse" r={2} aria-hidden="true">
-                      <animateMotion dur={`${3 + hashDur(link.id)}s`} repeatCount="indefinite" path={link.d} />
-                    </circle>
-                  )}
-                </g>
+                <path key={link.id} className={cls} d={lit ? link.straight : link.d} pathLength={1} />
               );
             })}
           </g>
@@ -129,7 +116,8 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
             .filter((n) => n.kind !== 'identity')
             .map((node) => {
               const dim = !hubMatches(node) || (active !== null && !relatedToActive(node));
-              const size = node.kind === 'dependency' ? 14 : 18;
+              const size = node.kind === 'dependency' ? 8 : 10;
+              const related = relatedToActive(node);
               return (
                 <g
                   key={node.id}
@@ -139,10 +127,11 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
                   aria-label={`${node.kind}: ${node.label}`}
                 >
                   <rect x={-size / 2} y={-size / 2} width={size} height={size} />
-                  <Glyph kind={node.glyph} size={size - 5} x={0} y={0} />
-                  <text y={size / 2 + 11} textAnchor="middle" className="map-label-sm">
-                    {truncate(node.label, labelMax).toUpperCase()}
-                  </text>
+                  {related && (
+                    <text y={size / 2 + 11} textAnchor="middle" className="map-label-sm">
+                      {truncate(node.label, labelMax).toUpperCase()}
+                    </text>
+                  )}
                 </g>
               );
             })}
@@ -204,12 +193,16 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
                     </text>
                   </g>
                 )}
-                <text className="map-label" y={31} textAnchor="middle">
-                  {truncate(identity.name, labelMax).toUpperCase()}
-                </text>
-                <text className="map-label-sub" y={43} textAnchor="middle">
-                  {truncate(node.sub, labelMax + 8)}
-                </text>
+                {(critical || state === 'orphaned' || active === identity.id || selectedId === identity.id) && (
+                  <text
+                    className="map-label"
+                    y={31}
+                    x={node.x < 110 ? -14 : node.x > w - 110 ? 14 : 0}
+                    textAnchor={node.x < 110 ? 'start' : node.x > w - 110 ? 'end' : 'middle'}
+                  >
+                    {truncate(identity.name, active === identity.id || selectedId === identity.id ? labelMax : Math.min(labelMax, 18)).toUpperCase()}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -232,12 +225,6 @@ export function NetworkMap({ identities, details, states, dimmedIds, selectedId,
     </div>
   );
 
-}
-
-function hashDur(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
-  return (h % 30) / 10;
 }
 
 export function MapLegend() {
