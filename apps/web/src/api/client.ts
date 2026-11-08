@@ -145,6 +145,21 @@ export function openEventStream(params: StreamParams, handlers: StreamHandlers):
   return () => source.close();
 }
 
+function transitionRemediation(planId: string, action: 'approve' | 'reject' | 'simulate'): Promise<RemediationPlan> {
+  return request(`/api/remediation-plans/${encodeURIComponent(planId)}/${action}`, { method: 'POST' });
+}
+
+/** proposed -> approved. Records a human decision only; nothing is executed. */
+export function approveRemediation(planId: string): Promise<RemediationPlan> {
+  return transitionRemediation(planId, 'approve');
+}
+
+/** proposed -> rejected. */
+export function rejectRemediation(planId: string): Promise<RemediationPlan> {
+  return transitionRemediation(planId, 'reject');
+}
+
+/** approved -> simulated. Dry run only; the Worker answers 409 for any other status. */
 export function simulateRemediation(planId: string): Promise<RemediationPlan> {
-  return request(`/api/remediation-plans/${encodeURIComponent(planId)}/simulate`, { method: 'POST' });
+  return transitionRemediation(planId, 'simulate');
 }

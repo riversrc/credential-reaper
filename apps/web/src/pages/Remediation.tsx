@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { RemediationPlan } from '@credential-reaper/shared';
-import { fetchRemediationPlans, simulateRemediation } from '../api/client';
+import { ApiRequestError, approveRemediation, fetchRemediationPlans, rejectRemediation, simulateRemediation } from '../api/client';
 import { AutomationTag, StatusBadge } from '../components/Badges';
 import { Panel } from '../components/Panel';
 import { StateMessage } from '../components/StateMessage';
@@ -10,11 +10,21 @@ function formatDateTime(iso: string | null) {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+type PlanAction = 'approve' | 'reject' | 'simulate';
+
+const ACTIONS: Record<PlanAction, (id: string) => Promise<RemediationPlan>> = {
+  approve: approveRemediation,
+  reject: rejectRemediation,
+  simulate: simulateRemediation,
+};
+
+const PENDING_LABEL: Record<PlanAction, string> = { approve: 'Approving…', reject: 'Rejecting…', simulate: 'Simulating…' };
+
 export function Remediation() {
   const [plans, setPlans] = useState<RemediationPlan[] | null>(null);
-  const [simulatingId, setSimulatingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<{ id: string; action: PlanAction } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [simulateError, setSimulateError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchRemediationPlans()
@@ -22,16 +32,20 @@ export function Remediation() {
       .catch((e) => setLoadError(String(e.message ?? e)));
   }, []);
 
-  async function handleSimulate(id: string) {
-    setSimulatingId(id);
-    setSimulateError(null);
+  async function handleAction(id: string, action: PlanAction) {
+    setBusy({ id, action });
+    setActionError(null);
     try {
-      const updated = await simulateRemediation(id);
+      const updated = await ACTIONS[action](id);
       setPlans((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev);
     } catch (e) {
-      setSimulateError(String((e as Error).message ?? e));
+      setActionError(String((e as Error).message ?? e));
+      // A 409 means our copy of the plan is out of date; resync so the buttons match the stored status.
+      if (e instanceof ApiRequestError && e.status === 409) {
+        fetchRemediationPlans().then(setPlans).catch(() => {});
+      }
     } finally {
-      setSimulatingId(null);
+      setBusy(null);
     }
   }
 
@@ -44,11 +58,14 @@ export function Remediation() {
       <p className="safety-line" style={{ marginBottom: '1rem' }}>
         Dry run — no live credential is touched.
       </p>
+      <p className="muted-sm" style={{ marginBottom: '1rem' }}>
+        Approving a plan only allows it to be previewed. It does not execute anything, and real execution is not available.
+      </p>
 
       {loadError && <StateMessage kind="error">{loadError}</StateMessage>}
       {!loadError && !plans && <StateMessage kind="loading">loading remediation plans…</StateMessage>}
       {!loadError && plans && plans.length === 0 && <StateMessage kind="empty">no remediation plans yet.</StateMessage>}
-      {simulateError && <StateMessage kind="error">{simulateError}</StateMessage>}
+      {actionError && <StateMessage kind="error">{actionError}</StateMessage>}
 
       {plans?.map((plan) => (
         <Panel
@@ -74,13 +91,37 @@ export function Remediation() {
               Created {formatDateTime(plan.createdAt)}
               {plan.simulatedAt ? ` · simulated ${formatDateTime(plan.simulatedAt)}` : ''}
             </span>
-            <button
-              className="btn btn-secondary"
-              disabled={plan.status === 'simulated' || simulatingId === plan.id}
-              onClick={() => handleSimulate(plan.id)}
-            >
-              {simulatingId === plan.id ? 'Simulating…' : plan.status === 'simulated' ? 'Simulated' : 'Simulate (dry run)'}
-            </button>
+            <div className="plan-actions">
+              {plan.status === 'proposed' && (
+                <>
+                  <button className="btn" disabled={busy !== null} onClick={() => handleAction(plan.id, 'approve')}>
+                    {busy?.id === plan.id && busy.action === 'approve' ? PENDING_LABEL.approve : 'Approve plan'}
+                  </button>
+                  <button className="btn btn-secondary" disabled={busy !== null} onClick={() => handleAction(plan.id, 'reject')}>
+                    {busy?.id === plan.id && busy.action === 'reject' ? PENDING_LABEL.reject : 'Reject'}
+                  </button>
+                </>
+              )}
+              {plan.status !== 'rejected' && (
+                <button
+                  className="btn btn-secondary"
+                  disabled={plan.status !== 'approved' || busy !== null}
+                  aria-describedby={plan.status === 'proposed' ? `${plan.id}-simulate-hint` : undefined}
+                  onClick={() => handleAction(plan.id, 'simulate')}
+                >
+                  {busy?.id === plan.id && busy.action === 'simulate'
+                    ? PENDING_LABEL.simulate
+                    : plan.status === 'simulated'
+                      ? 'Simulated'
+                      : 'Simulate (dry run)'}
+                </button>
+              )}
+              {plan.status === 'proposed' && (
+                <span id={`${plan.id}-simulate-hint`} className="muted-sm">
+                  Approve the plan to enable simulation.
+                </span>
+              )}
+            </div>
           </div>
         </Panel>
       ))}

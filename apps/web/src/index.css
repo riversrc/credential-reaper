@@ -1196,6 +1196,13 @@ details[open] > .disc-sum::before {
   flex-wrap: wrap;
 }
 
+.plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .muted-sm {
   color: var(--text-dim);
   font-size: 0.72rem;
