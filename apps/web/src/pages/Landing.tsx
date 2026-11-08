@@ -100,9 +100,7 @@ export function Landing() {
       <section className="hero">
         <div className="hero-copy">
           <h1 className="display-xl">
-            <span>Every key+</span>
-            <span>Every bot+</span>
-            <span>Nothing forgotten+</span>
+            <span>there is only one path for forgotten machines, one that leads to the afterlife.</span>
           </h1>
           <p className="hero-body">
             Find every <strong>machine identity</strong>, investigate the stale ones, fix them as a reviewed pull request.
