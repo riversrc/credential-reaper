@@ -491,17 +491,18 @@ tr.row-dim {
 }
 
 @media (hover: hover) {
-  .btn:hover:not(:disabled) {
+  .btn:hover:not(:disabled):not([aria-disabled='true']) {
     background: #7dff62;
     border-color: #7dff62;
   }
 }
 
-.btn:active:not(:disabled) {
+.btn:active:not(:disabled):not([aria-disabled='true']) {
   transform: scale(0.97);
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
@@ -515,7 +516,7 @@ tr.row-dim {
 }
 
 @media (hover: hover) {
-  .btn-secondary:hover:not(:disabled) {
+  .btn-secondary:hover:not(:disabled):not([aria-disabled='true']) {
     background: var(--accent-dim);
     border-color: var(--accent);
     color: var(--accent);
@@ -1286,4 +1287,16 @@ details[open] > .disc-sum::before {
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
