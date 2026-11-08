@@ -82,7 +82,7 @@ function toInvestigation(row: InvestigationRow): Investigation {
   const { findingBases, riskScore, riskLevel, riskFactors, findings, ...rest } = row;
   return {
     ...rest,
-    findings: findings.map((f, i) => ({ ...f, basis: findingBases[i] ?? 'confirmed' })),
+    findings: findings.map((f, i) => ({ ...f, basis: findingBases?.[i] ?? 'confirmed' })),
     riskAssessment: riskLevel
       ? { score: riskScore, level: riskLevel as RiskAssessment['level'], factors: riskFactors }
       : null,
