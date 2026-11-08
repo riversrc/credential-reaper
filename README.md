@@ -138,6 +138,43 @@ Browser-facing POSTs require `Content-Type: application/json` (else 415) and, if
 `http://localhost:5173,http://localhost:5174`; else 403). Requests without `Origin` (curl, scripts) pass.
 The audit `actor` for ownership and remediation actions is the fixed label `web-operator`; a body `actor` is ignored.
 
+### Remediation as a pull request
+
+For a `retire` plan on an identity the repository declares as `declared-only`, an approved plan can be turned
+into a real GitHub pull request. `POST /api/remediation-plans/:id/pr-preview` is read-only: it fetches the head
+of `GITHUB_SYNC_BRANCH`, builds the change that removes the identity's declaration, permission and ownership
+records and its bindings in the owning service, and verifies it by re-scanning the changed repository in memory
+(exactly that identity's records must disappear, nothing else). `POST /api/remediation-plans/:id/open-pr`
+then commits that change to a new `reaper/retire-<name>-<plan>` branch and opens a pull request into the
+synced branch, using `GITHUB_PR_TOKEN`, a separate fine-grained token with Contents and Pull requests write on
+the one repository (503 while unset; the read-only `GITHUB_TOKEN` is never used to write). The pull request
+changes configuration only: it never revokes, rotates or deletes a credential, the base branch is never written,
+and a person merges it. Merging triggers the push webhook, which marks the identity `removed` (never `retired`).
+Active identities and anything the layout check does not recognise are refused with a 409.
+
+Tests: `cd workers/api && pnpm test:pr` (change equals the scenario patch, refusals, fake-GitHub flow; no services);
+with `PR_TEST_API` and friends set it also runs end to end through a Worker on a test database (see the top of
+`scripts/test-remediation-pr.ts`).
+
+### GitHub push webhook
+
+A push to the tracked branch of the Arasaka repo triggers the same scan and ingest, so new machine
+identities show up without running the CLI. `POST /api/webhooks/github` is authenticated only by GitHub's
+HMAC signature (`X-Hub-Signature-256`, secret `GITHUB_WEBHOOK_SECRET`; 503 while unset, 401 on a bad
+signature). It answers 202 right away, downloads the pushed commit as one tarball, scans it, and ingests it
+in the background. Each ingest writes an audit and security event that names the new identities and the
+commit, for example `New identities (1): analytics-report-publisher. Triggered by push 3a1f9c2 by river.`
+
+To connect it locally: expose the Worker (for example `cloudflared tunnel --url http://localhost:8788`), then in
+the GitHub repo add a webhook with Payload URL `<public-url>/api/webhooks/github`, content type
+`application/json`, the secret from `.dev.vars`, and "Just the push event". Set `GITHUB_SYNC_BRANCH` to the
+branch you push to. The scanned repo name (`owner/name`) must match the one already ingested, because the
+module refuses to let a different repository take over an identity.
+
+Tests: `cd workers/api && pnpm test:webhook` runs signature, payload and tarball tests with no services; with
+`WEBHOOK_TEST_API` set it also runs an end-to-end test against a Worker started with a fake GitHub (see the top
+of `scripts/test-github-webhook.ts`). That test adds a scenario identity, so point it at a test database.
+
 Tests: `cd workers/api && pnpm test:scan` (scanner, no services needed) and
 `INGEST_TEST_API=http://localhost:8787 pnpm test:ingest` (end to end against a
 running Worker + SpacetimeDB; it writes to that database, so point it at a
@@ -155,11 +192,11 @@ actor, in line with the no-auth note below.
 permissions, dependencies, credentials metadata, usage events,
 investigations, remediation plans, audit events) and reducers
 (`startInvestigation`, `completeInvestigation`, `proposeRemediation`,
-`simulateRemediation`, plus 5 `seed*` reducers used only for bootstrapping)
+`simulateRemediation`, `recordRemediationPr`, plus 5 `seed*` reducers used only for bootstrapping)
 that back the Worker API, plus the Repository Sync tables (`repo_scan`,
 `repo_record`) and reducers (`beginRepoScan`, `ingestRepoRecords`,
 `syncRepoIdentity`, `finishRepoScan`, `setIdentityOwnership`) — 12 tables and
-19 reducers in total (including a few not listed here that predate Repository Sync). Useful commands once a local instance is running:
+20 reducers in total (including a few not listed here that predate Repository Sync). Useful commands once a local instance is running:
 
 ```bash
 spacetime describe --server local credential-reaper

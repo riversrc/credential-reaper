@@ -158,6 +158,10 @@ const remediationPlan = table(
     // Added after the first publish with defaults so existing rows auto-migrate.
     decidedAt: t.option(t.string()).default(undefined),
     decidedBy: t.option(t.string()).default(undefined),
+    // Pull request opened for this plan; empty strings until then.
+    prUrl: t.string().default(''),
+    prBranch: t.string().default(''),
+    prOpenedAt: t.string().default(''),
   }
 );
 
@@ -684,8 +688,8 @@ export const syncRepoIdentity = spacetimedb.reducer(
  * grant or dependency row, and leaves the identity itself, its credential metadata and its status alone.
  */
 export const finishRepoScan = spacetimedb.reducer(
-  { scanId: t.string(), auditId: t.string(), securityId: t.string(), timestamp: t.string() },
-  (ctx, { scanId, auditId, securityId, timestamp }) => {
+  { scanId: t.string(), auditId: t.string(), securityId: t.string(), timestamp: t.string(), detail: t.option(t.string()) },
+  (ctx, { scanId, auditId, securityId, timestamp, detail }) => {
     requireWorker(ctx);
     const scan = ctx.db.repoScan.id.find(scanId);
     if (!scan) throw new SenderError(`Unknown scan ${scanId}`);
@@ -721,8 +725,10 @@ export const finishRepoScan = spacetimedb.reducer(
       persisted[k] = (persisted[k] ?? 0) + 1;
     }
     ctx.db.repoScan.id.update({ ...scan, removed, finished: true, persistedJson: JSON.stringify(persisted) });
-    // Counts only, never record contents.
-    const summary = `Repository scan of ${scan.repo} (${scan.status}): ${scan.added} added, ${scan.changed} changed, ${removed} removed.`;
+    // Counts plus the caller's short note (trigger and new identity names); never record contents.
+    const note = (detail ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 600);
+    const counts = `Repository scan of ${scan.repo} (${scan.status}): ${scan.added} added, ${scan.changed} changed, ${removed} removed.`;
+    const summary = note ? `${counts} ${note}` : counts;
     if (!ctx.db.auditEvent.id.find(auditId)) {
       ctx.db.auditEvent.insert({
         id: auditId,
@@ -743,7 +749,7 @@ export const finishRepoScan = spacetimedb.reducer(
       type: 'repo-scan-ingested',
       source: 'repo-sync',
       actor: 'repo-sync',
-      summary,
+      summary: /^(New identities|Back in)/.test(note) ? note : summary,
       details: summary,
     });
   }
@@ -1036,6 +1042,9 @@ export const proposeRemediation = spacetimedb.reducer(
       simulatedAt: undefined,
       decidedAt: undefined,
       decidedBy: undefined,
+      prUrl: '',
+      prBranch: '',
+      prOpenedAt: '',
     });
     ctx.db.auditEvent.insert({
       id: `${id}-proposed`,
@@ -1145,6 +1154,51 @@ export const rejectRemediation = spacetimedb.reducer(
       actor,
       summary: `${actor} rejected the ${plan.action} plan for ${plan.identityName}`,
       details: `"${plan.action}" plan for ${plan.identityName} rejected by ${actor}. No credential was changed.`,
+    });
+  }
+);
+
+const PR_URL_PATTERN = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+$/;
+const PR_BRANCH_PATTERN = /^reaper\/[A-Za-z0-9._-]{1,100}$/;
+
+/** Records the pull request the Worker opened for an approved or simulated plan. The PR changes repository configuration only; no credential is touched. */
+export const recordRemediationPr = spacetimedb.reducer(
+  { planId: t.string(), prUrl: t.string(), prBranch: t.string(), openedAt: t.string(), actor: t.string() },
+  (ctx, { planId, prUrl, prBranch, openedAt, actor }) => {
+    requireWorker(ctx);
+    const plan = ctx.db.remediationPlan.id.find(planId);
+    if (!plan) throw new SenderError(`Remediation plan ${planId} not found`);
+    if (plan.status !== 'approved' && plan.status !== 'simulated') throw new SenderError(`Cannot record a pull request for a plan in status "${plan.status}"`);
+    if (plan.prUrl) throw new SenderError('A pull request is already recorded for this plan');
+    if (!PR_URL_PATTERN.test(prUrl)) throw new SenderError('prUrl must be a github.com pull request URL');
+    if (!PR_BRANCH_PATTERN.test(prBranch)) throw new SenderError('prBranch must be a reaper/ branch');
+
+    ctx.db.remediationPlan.id.update({ ...plan, prUrl, prBranch, prOpenedAt: openedAt });
+    const details = `Pull request opened for the "${plan.action}" plan: ${prUrl}. It changes repository configuration only; merging is a human decision and no credential was revoked.`;
+    ctx.db.auditEvent.insert({
+      id: `${planId}-pr`,
+      timestamp: openedAt,
+      action: 'remediation-pr-opened',
+      actor,
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      details,
+    });
+    emitSecurityEvent(ctx, {
+      id: `${planId}-pr`,
+      timestamp: openedAt,
+      kind: 'user-action',
+      type: 'remediation-pr-opened',
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      source: 'operator',
+      actor,
+      summary: `Pull request opened to retire ${plan.identityName} in configuration`,
+      details,
     });
   }
 );

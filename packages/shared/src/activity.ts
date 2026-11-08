@@ -46,6 +46,7 @@ export type SecurityEventType =
   | 'remediation-approved'
   | 'remediation-rejected'
   | 'remediation-simulated'
+  | 'remediation-pr-opened'
   | 'repo-scan-ingested';
 
 /**

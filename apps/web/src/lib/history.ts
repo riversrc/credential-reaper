@@ -8,6 +8,7 @@ export const ACTION_TITLE: Record<AuditEvent['action'], string> = {
   'remediation-proposed': 'Remediation proposed',
   'remediation-approved': 'Remediation approved',
   'remediation-simulated': 'Remediation simulated',
+  'remediation-pr-opened': 'Pull request opened',
   'remediation-rejected': 'Remediation rejected',
   'identity-retired': 'Identity retired',
   'ownership-curated': 'Ownership updated',

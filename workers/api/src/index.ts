@@ -1,4 +1,4 @@
-import type { ApiError, RemediationPlan, StartInvestigationRequest } from '@credential-reaper/shared';
+import type { ApiError, RemediationPlan, RemediationPrPreview, StartInvestigationRequest } from '@credential-reaper/shared';
 import { InvestigationFailedError, runInvestigation } from './agent/investigate.js';
 import { getAiProvider, type AiProviderEnv } from './providers/index.js';
 import { REDUCER_REJECTED_STATUS, SpacetimeError, type SpacetimeEnv } from './spacetime/client.js';
@@ -7,6 +7,7 @@ import {
   ensureSeeded,
   fetchAuditEvents,
   fetchIdentities,
+  fetchIdentity,
   fetchIdentityDetail,
   fetchInvestigation,
   fetchInvestigationEvents,
@@ -17,13 +18,18 @@ import {
   fetchSecurityEvents,
   investigationExists,
   MAX_EVENT_ROWS,
+  recordRemediationPrRow,
   simulateRemediationRow,
 } from './spacetime/repository.js';
 import { openEventStream, parseEventId } from './stream.js';
+import { fetchGithubSource, ignoredReason, MAX_WEBHOOK_BODY_CHARS, parsePushEvent, verifyGithubSignature, type GithubEnv, type PushEvent } from './sync/github.ts';
+import { branchFor, GithubError, loadRetirement, openPullRequest, prTitle, type LoadedRetirement } from './sync/pr.ts';
+import { RetireRefused } from './sync/retire.ts';
+import { scanRepository } from './sync/scan.ts';
 import { fetchRepoScans, fetchRepositoryEvidence, hasUnfinishedScan, ingestScan, updateOwnership } from './sync/store.ts';
 import { MAX_SCAN_BODY_CHARS, validateScan } from './sync/validate.ts';
 
-export interface Env extends AiProviderEnv, SpacetimeEnv {
+export interface Env extends AiProviderEnv, SpacetimeEnv, GithubEnv {
   /** Secret. Bearer token required by POST /api/repository/scans; ingest is refused (503) while unset. */
   INGEST_TOKEN?: string;
   /** Comma-separated browser origins allowed to call the API. */
@@ -200,6 +206,82 @@ async function handleRemediationTransition(
   return json(updated ?? { ...plan });
 }
 
+/**
+ * Builds the verified change for a plan, or answers why none can be made. Only an approved or simulated `retire` of a
+ * declared-only identity that the configured repository still declares qualifies.
+ */
+async function loadPlanRetirement(env: Env, planId: string): Promise<{ plan: RemediationPlan; loaded: LoadedRetirement } | Response> {
+  const plan = await fetchRemediationPlan(env, planId);
+  if (!plan) return notFound(`Remediation plan ${planId} not found`);
+  if (plan.action !== 'retire') return conflict('Only retire plans can be turned into a pull request.');
+  if (plan.status !== 'approved' && plan.status !== 'simulated') return conflict(`Remediation plan ${planId} is "${plan.status}"; a pull request needs an approved plan.`);
+  if (plan.prUrl) return conflict(`A pull request is already open for plan ${planId}.`);
+  const identity = await fetchIdentity(env, plan.identityId);
+  if (!identity || identity.dataSource !== 'repository' || identity.repoState !== 'present') {
+    return conflict(`${plan.identityName} is not an identity declared in the synced repository.`);
+  }
+  const repo = env.GITHUB_SYNC_REPO;
+  const baseBranch = env.GITHUB_SYNC_BRANCH;
+  if (!repo || !baseBranch) return apiError(503, 'pull_requests_unavailable', 'Pull requests are not configured (GITHUB_SYNC_REPO and GITHUB_SYNC_BRANCH).');
+  try {
+    return { plan, loaded: await loadRetirement(env, { repo, baseBranch }, identity.name) };
+  } catch (e) {
+    if (e instanceof RetireRefused) return conflict(e.message);
+    if (e instanceof GithubError) {
+      console.error(JSON.stringify({ event: 'remediation_pr_github_failed', status: e.status, message: e.message }));
+      return apiError(502, 'github_unavailable', 'GitHub could not be read. Check the repository and token configuration.');
+    }
+    throw e;
+  }
+}
+
+async function handlePrPreview(request: Request, env: Env, planId: string): Promise<Response> {
+  const body = await readJsonObject(request, false);
+  if (body instanceof Response) return body;
+  const result = await loadPlanRetirement(env, planId);
+  if (result instanceof Response) return result;
+  const { plan, loaded } = result;
+  const { retirement } = loaded;
+  return json({
+    planId,
+    repo: loaded.repo,
+    baseBranch: loaded.baseBranch,
+    baseSha: loaded.baseSha,
+    branch: branchFor(plan, retirement.identity.name),
+    title: prTitle(retirement),
+    files: retirement.files.map((f) => ({ path: f.path, change: f.change, removedLines: f.removedLines })),
+    verification: retirement.verification,
+    leftUntouched: retirement.leftUntouched,
+  } satisfies RemediationPrPreview);
+}
+
+async function handleOpenPr(request: Request, env: Env, planId: string): Promise<Response> {
+  const body = await readJsonObject(request, false);
+  if (body instanceof Response) return body;
+  if (!env.GITHUB_PR_TOKEN) return apiError(503, 'pull_requests_unavailable', 'Opening pull requests is not enabled: GITHUB_PR_TOKEN is not set.');
+  const result = await loadPlanRetirement(env, planId);
+  if (result instanceof Response) return result;
+  let opened;
+  try {
+    opened = await openPullRequest(env, result.loaded, result.plan);
+  } catch (e) {
+    if (e instanceof GithubError) {
+      console.error(JSON.stringify({ event: 'remediation_pr_github_failed', status: e.status, message: e.message }));
+      const exists = e.status === 422 ? ' A branch for this plan may already exist.' : '';
+      return apiError(502, 'github_rejected', `GitHub did not accept the pull request.${exists}`);
+    }
+    throw e;
+  }
+  const at = new Date().toISOString();
+  try {
+    await recordRemediationPrRow(env, { planId, prUrl: opened.url, prBranch: opened.branch, openedAt: at, actor: OPERATOR_ACTOR });
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'remediation_pr_record_failed', planId, prUrl: opened.url }));
+    throw e;
+  }
+  return json((await fetchRemediationPlan(env, planId)) ?? { ...result.plan, prUrl: opened.url, prBranch: opened.branch, prOpenedAt: at }, { status: 201 });
+}
+
 async function handleRepositoryScan(request: Request, env: Env): Promise<Response> {
   const denied = await ingestAuthFailure(request, env);
   if (denied) return denied;
@@ -255,7 +337,54 @@ async function handleOwnershipUpdate(request: Request, env: Env, identityId: str
   return json({ identity: updated });
 }
 
-async function route(request: Request, env: Env): Promise<Response> {
+/** Scans the pushed commit and ingests it. Runs after the webhook has answered; failures are logged, never thrown. */
+async function syncPush(env: Env, push: PushEvent): Promise<void> {
+  try {
+    const source = await fetchGithubSource(env, push.repo, push.sha);
+    const scan = scanRepository(source, { repo: push.repo, commitSha: push.sha });
+    if (source.incomplete) scan.status = 'partial';
+    const result = validateScan(scan);
+    if (!result.ok) throw new Error('the scan of the pushed commit failed validation');
+    if (result.scan.machineIdentities.length > MAX_SCAN_IDENTITIES) throw new Error('the scan declares too many identities');
+    const now = new Date();
+    if (await hasUnfinishedScan(env, push.repo, now)) throw new Error('another scan of this repository is still running');
+    await ingestScan(env, result.scan, now, { trigger: `push ${push.sha.slice(0, 7)}${push.pusher ? ` by ${push.pusher}` : ''}` });
+  } catch (e) {
+    logError('github_sync_failed', e, 'POST', '/api/webhooks/github');
+  }
+}
+
+/** GitHub push webhook. Authenticated only by the HMAC signature; answers fast and scans in the background. */
+async function handleGithubWebhook(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (!env.GITHUB_WEBHOOK_SECRET) return apiError(503, 'webhook_unavailable', 'The GitHub webhook is not available.');
+  if (!isJson(request)) return unsupportedMediaType();
+  if (Number(request.headers.get('Content-Length')) > MAX_WEBHOOK_BODY_CHARS) return apiError(413, 'payload_too_large', 'Webhook body is too large.');
+  const body = await request.text();
+  if (body.length > MAX_WEBHOOK_BODY_CHARS) return apiError(413, 'payload_too_large', 'Webhook body is too large.');
+  if (!(await verifyGithubSignature(env.GITHUB_WEBHOOK_SECRET, body, request.headers.get('X-Hub-Signature-256')))) {
+    return apiError(401, 'unauthorized', 'Authentication required.');
+  }
+
+  const event = request.headers.get('X-GitHub-Event');
+  if (event === 'ping') return json({ ok: true, event: 'ping' });
+  if (event !== 'push') return json({ ok: true, ignored: `event ${event ?? 'unknown'} is not handled` }, { status: 202 });
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return badRequest('Request body must be valid JSON.');
+  }
+  const push = parsePushEvent(payload);
+  if (!push) return json({ ok: true, ignored: 'not a branch push with a usable commit' }, { status: 202 });
+  const reason = ignoredReason(env, push);
+  if (reason) return json({ ok: true, ignored: reason }, { status: 202 });
+
+  ctx.waitUntil(syncPush(env, push));
+  return json({ ok: true, accepted: { repo: push.repo, commit: push.sha } }, { status: 202 });
+}
+
+async function route(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const { pathname } = url;
   const method = request.method;
@@ -287,6 +416,7 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleOwnershipUpdate(request, env, id);
   }
 
+  if (pathname === '/api/webhooks/github' && method === 'POST') return handleGithubWebhook(request, env, ctx);
   if (pathname === '/api/repository/scans' && method === 'POST') return handleRepositoryScan(request, env);
   if (pathname === '/api/repository/scans' && method === 'GET') return json(await fetchRepoScans(env));
 
@@ -353,6 +483,13 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleRemediationTransition(request, env, planId, transitionMatch[2] as 'approve' | 'reject' | 'simulate');
   }
 
+  const prMatch = pathname.match(/^\/api\/remediation-plans\/([^/]+)\/(pr-preview|open-pr)$/);
+  if (prMatch && method === 'POST') {
+    const planId = prMatch[1]!;
+    if (!ID_PATTERN.test(planId)) return badRequest('Invalid remediation plan id.');
+    return prMatch[2] === 'pr-preview' ? handlePrPreview(request, env, planId) : handleOpenPr(request, env, planId);
+  }
+
   return notFound(`No route for ${method} ${pathname}`);
 }
 
@@ -375,7 +512,7 @@ function withCors(response: Response, origin: string | null, allowed: boolean): 
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin');
     const allowed = origin !== null && allowedOrigins(env).includes(origin);
 
@@ -388,7 +525,7 @@ export default {
     }
 
     try {
-      return withCors(await route(request, env), origin, allowed);
+      return withCors(await route(request, env, ctx), origin, allowed);
     } catch (e) {
       const url = new URL(request.url);
       logError('unhandled_error', e, request.method, url.pathname);

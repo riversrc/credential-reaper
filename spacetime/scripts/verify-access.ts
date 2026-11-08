@@ -43,6 +43,7 @@ const REDUCER_ARGS: Record<string, unknown> = {
   approve_remediation: { planId: s, decidedAt: s, actor: s },
   reject_remediation: { planId: s, decidedAt: s, actor: s },
   simulate_remediation: { planId: s, simulatedAt: s, actor: s },
+  record_remediation_pr: { planId: s, prUrl: s, prBranch: s, openedAt: s, actor: s },
   begin_repo_scan: { id: s, repo: s, commitSha: { none: {} }, scannedAt: s, ingestedAt: s, status: s, countsJson: '{}', warningsJson: '[]' },
   ingest_repo_records: { scanId: s, records: [{ list: s, key: s, projected: s, hash: s, payload: '{}', provenance: '{}' }] },
   sync_repo_identity: {
@@ -50,7 +51,7 @@ const REDUCER_ARGS: Record<string, unknown> = {
     tags: [], description: s, grants: [], dependencies: [], prune: false, hasCredential: false, credentialId: s, credentialKind: s,
     storageLocation: s, maskedPreview: s, credentialCreatedAt: s, lastRotatedAt: { none: {} }, expiresAt: { none: {} },
   },
-  finish_repo_scan: { scanId: s, auditId: s, securityId: s, timestamp: s },
+  finish_repo_scan: { scanId: s, auditId: s, securityId: s, timestamp: s, detail: { none: {} } },
   set_identity_ownership: { identityId: s, owner: s, team: s, ownerSource: 'curated', status: 'active', riskLevel: 'low', riskScore: 0, actor: s, timestamp: s, auditId: s, details: s },
   record_investigation_event: { investigationId: s, timestamp: s, eventType: s, stage: s, toolName: { none: {} }, status: s, message: s, details: s },
 };

@@ -13,6 +13,7 @@ import type {
   OwnershipUpdateRequest,
   PermissionGrant,
   RemediationPlan,
+  RemediationPrPreview,
   RepositoryEvidence,
   SecurityEvent,
   StartInvestigationRequest,
@@ -169,4 +170,14 @@ export function rejectRemediation(planId: string): Promise<RemediationPlan> {
 /** approved -> simulated. Dry run only; the Worker answers 409 for any other status. */
 export function simulateRemediation(planId: string): Promise<RemediationPlan> {
   return transitionRemediation(planId, 'simulate');
+}
+
+/** Read-only. 409 when the plan cannot become a pull request (not a retire of a declared-only repository identity, or not approved). */
+export function previewRemediationPr(planId: string): Promise<RemediationPrPreview> {
+  return request(`/api/remediation-plans/${encodeURIComponent(planId)}/pr-preview`, { method: 'POST' });
+}
+
+/** Opens a pull request that changes repository configuration only; a person still has to merge it. */
+export function openRemediationPr(planId: string): Promise<RemediationPlan> {
+  return request(`/api/remediation-plans/${encodeURIComponent(planId)}/open-pr`, { method: 'POST' });
 }

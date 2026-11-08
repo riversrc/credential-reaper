@@ -29,7 +29,7 @@ export function Layout() {
             </NavLink>
           ))}
         </div>
-        <div className="sidebar-foot">Dry run only</div>
+        <div className="sidebar-foot">No credentials touched</div>
       </nav>
       <main className="main">
         <ErrorBoundary key={location.pathname}>
@@ -51,11 +51,13 @@ export function LandingLayout() {
         </Link>
         <span className="topbar-sub">MACHINE IDENTITY</span>
         <nav className="topbar-nav" aria-label="Primary">
-          {links.map((link) => (
-            <NavLink key={link.to} to={link.to} className={({ isActive }) => `topbar-link${isActive ? ' active' : ''}`}>
-              {link.label}
-            </NavLink>
-          ))}
+          {links
+            .filter((link) => link.to !== '/grid')
+            .map((link) => (
+              <NavLink key={link.to} to={link.to} className={({ isActive }) => `topbar-link${isActive ? ' active' : ''}`}>
+                {link.label}
+              </NavLink>
+            ))}
         </nav>
         <Link to="/grid" className="btn btn-sm topbar-cta">
           Open the grid <ArrowRight />

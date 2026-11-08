@@ -1204,6 +1204,24 @@ details[open] > .disc-sum::before {
   flex-wrap: wrap;
 }
 
+.pr-preview {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.pr-preview ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.pr-link {
+  margin: 0.5rem 0;
+  word-break: break-all;
+}
+
 .muted-sm {
   color: var(--text-dim);
   font-size: 0.72rem;

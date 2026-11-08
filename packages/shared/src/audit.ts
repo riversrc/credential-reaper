@@ -5,6 +5,7 @@ export type AuditAction =
   | 'remediation-proposed'
   | 'remediation-approved'
   | 'remediation-simulated'
+  | 'remediation-pr-opened'
   | 'remediation-rejected'
   | 'identity-retired'
   | 'ownership-curated'

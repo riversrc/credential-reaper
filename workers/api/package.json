@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "scan:repo": "node scripts/scan-repo.ts",
     "test:scan": "node --test scripts/test-scan-arasaka.ts",
-    "test:ingest": "node --test scripts/test-ingest-e2e.ts"
+    "test:ingest": "node --test scripts/test-ingest-e2e.ts",
+    "test:webhook": "node --test scripts/test-github-webhook.ts",
+    "test:pr": "node --test scripts/test-remediation-pr.ts"
   },
   "dependencies": {
     "@credential-reaper/shared": "workspace:*",

@@ -1,6 +1,6 @@
 import type { MachineIdentity, PermissionGrant, IdentityDependency, CredentialMetadata, UsageEvent } from './identity.js';
 import type { Investigation, StartInvestigationRequest } from './investigation.js';
-import type { RemediationPlan } from './remediation.js';
+import type { RemediationPlan, RemediationPrPreview } from './remediation.js';
 import type { AuditEvent } from './audit.js';
 import type { InvestigationEvent, RemediationDecisionRequest, SecurityEvent } from './activity.js';
 import type { RepositoryScan } from './repository-scan.js';
@@ -45,6 +45,10 @@ export interface ApiRoutes {
   'POST /api/remediation-plans/:id/reject': { body?: RemediationDecisionRequest; response: RemediationPlan };
   /** 409 unless the plan is `approved`. Dry run only; never touches a real credential. */
   'POST /api/remediation-plans/:id/simulate': { body?: RemediationDecisionRequest; response: RemediationPlan };
+  /** Read-only: the verified repository change a pull request would make. 409 unless the plan is an approved or simulated `retire` of a declared-only repository identity. */
+  'POST /api/remediation-plans/:id/pr-preview': { body?: RemediationDecisionRequest; response: RemediationPrPreview };
+  /** Opens the pull request (configuration only, merged by a human). 409 if one is already open; 503 while GITHUB_PR_TOKEN is unset. */
+  'POST /api/remediation-plans/:id/open-pr': { body?: RemediationDecisionRequest; response: RemediationPlan };
 }
 
 export interface ApiError {

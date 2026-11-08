@@ -180,6 +180,13 @@ export async function decideRemediationRow(env: SpacetimeEnv, decision: 'approve
   await callReducer(env, `${decision}_remediation`, { planId, decidedAt, actor });
 }
 
+export async function recordRemediationPrRow(
+  env: SpacetimeEnv,
+  args: { planId: string; prUrl: string; prBranch: string; openedAt: string; actor: string }
+): Promise<void> {
+  await callReducer(env, 'record_remediation_pr', args);
+}
+
 /** Investigations for this identity still marked running (the caller decides which are stale). */
 export async function fetchRunningInvestigations(env: SpacetimeEnv, identityId: string): Promise<Pick<Investigation, 'id' | 'startedAt'>[]> {
   return sqlQuery(env, `SELECT id, started_at FROM v_investigation WHERE identity_id = ${sqlString(identityId)} AND status = 'running'`);

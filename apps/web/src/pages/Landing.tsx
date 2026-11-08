@@ -105,7 +105,7 @@ export function Landing() {
             <span>Nothing forgotten+</span>
           </h1>
           <p className="hero-body">
-            Find every <strong>machine identity</strong>, investigate the stale ones, retire them safely. Dry run first.
+            Find every <strong>machine identity</strong>, investigate the stale ones, fix them as a reviewed pull request.
           </p>
           <div className="hero-actions">
             <Link to="/grid" className="btn">
@@ -255,7 +255,7 @@ export function Landing() {
           output={`${num(proposedCount)} open plans: retire, rotate, migrate or monitor`}
           prose={
             <>
-              Ordered steps, automatable or manual. <strong>Nothing runs</strong> until a person acts.
+              Ordered steps, and for repository identities a <strong>real pull request</strong> with the fix. Nothing merges until a person acts.
             </>
           }
           metric={proposedCount}

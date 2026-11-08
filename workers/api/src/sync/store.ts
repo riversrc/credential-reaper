@@ -106,7 +106,21 @@ function chunkRecords(records: RecordInput[]): RecordInput[][] {
   return chunks;
 }
 
-export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: Date): Promise<RepositoryIngestResponse> {
+const MAX_LISTED_NAMES = 8;
+
+function nameList(label: string, names: string[]): string {
+  if (names.length === 0) return '';
+  const shown = names.slice(0, MAX_LISTED_NAMES).join(', ');
+  const more = names.length > MAX_LISTED_NAMES ? ` and ${names.length - MAX_LISTED_NAMES} more` : '';
+  return ` ${label} (${names.length}): ${shown}${more}.`;
+}
+
+/** Names only, never record contents. Shown in the audit history and security feed next to the counts. */
+function describeIdentityChanges(trigger: string | undefined, created: string[], returned: string[]): string {
+  return `${nameList('New identities', created)}${nameList('Back in the repository', returned)}${trigger ? ` Triggered by ${trigger}.` : ''}`.trim();
+}
+
+export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: Date, options: { trigger?: string } = {}): Promise<RepositoryIngestResponse> {
   const ingestedAt = now.toISOString();
   const scanId = `scan-${now.getTime().toString(36)}-${(scan.commitSha ?? 'nocommit').slice(0, 12)}`;
   const records = await buildRecordInputs(scan);
@@ -128,6 +142,8 @@ export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: D
   }
 
   const skipped: { id: string; reason: string }[] = [];
+  const created: string[] = [];
+  const returned: string[] = [];
   let synced = 0;
   for (const identity of scan.machineIdentities) {
     const current = existing.get(identity.id) ?? null;
@@ -145,6 +161,8 @@ export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: D
         expiresAt: encodeOption(args.expiresAt),
       });
       synced++;
+      if (!current) created.push(identity.name);
+      else if (current.repoState === 'removed') returned.push(identity.name);
     } catch (e) {
       // The module refuses to overwrite an identity that another repository owns; report it instead of aborting the scan.
       if (!(e instanceof SpacetimeError && e.status === REDUCER_REJECTED_STATUS)) throw e;
@@ -152,7 +170,7 @@ export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: D
     }
   }
 
-  await callReducer(env, 'finish_repo_scan', { scanId, auditId: `audit-${scanId}`, securityId: `sec-${scanId}`, timestamp: ingestedAt });
+  await callReducer(env, 'finish_repo_scan', { scanId, auditId: `audit-${scanId}`, securityId: `sec-${scanId}`, timestamp: ingestedAt, detail: encodeOption(describeIdentityChanges(options.trigger, created, returned) || null) });
   const row = (await sqlQuery<RepoScanRow>(env, `SELECT * FROM v_repo_scan WHERE id = ${sqlString(scanId)}`))[0];
   return { scan: toScanRecord(row), identities: { declared: scan.machineIdentities.length, synced, skipped } };
 }

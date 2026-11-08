@@ -21,6 +21,7 @@ const actionLabels: Record<AuditEvent['action'], string> = {
   'remediation-proposed': 'Remediation plan proposed',
   'remediation-approved': 'Remediation plan approved',
   'remediation-simulated': 'Remediation simulated',
+  'remediation-pr-opened': 'Pull request opened',
   'remediation-rejected': 'Remediation plan rejected',
   'identity-retired': 'Identity retired',
   'ownership-curated': 'Ownership updated',
