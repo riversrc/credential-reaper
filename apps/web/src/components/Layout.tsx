@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const links = [
   { to: '/', label: 'The Grid' },
@@ -8,6 +9,7 @@ const links = [
 ];
 
 export function Layout() {
+  const location = useLocation();
   return (
     <div className="app-shell">
       <nav className="sidebar">
@@ -26,7 +28,9 @@ export function Layout() {
         ))}
       </nav>
       <main className="main">
-        <Outlet />
+        <ErrorBoundary key={location.pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );

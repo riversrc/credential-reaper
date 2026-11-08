@@ -86,7 +86,10 @@ export function Investigations() {
       {!loadError && investigations === null && <div className="empty-state">Loading investigations…</div>}
       {!loadError && investigations && investigations.length === 0 && <div className="empty-state">No investigations yet.</div>}
 
-      {investigations?.map((inv) => (
+      {investigations?.map((inv) => {
+        const findings = inv.findings ?? [];
+        const toolTrace = inv.toolTrace ?? [];
+        return (
         <div className="card" key={inv.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>{inv.identityName}</h3>
@@ -110,7 +113,7 @@ export function Investigations() {
                     <strong>{inv.riskAssessment.score}/100</strong> <RiskBadge level={inv.riskAssessment.level} />
                   </summary>
                   <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
-                    {inv.riskAssessment.factors.map((factor) => (
+                    {(inv.riskAssessment.factors ?? []).map((factor) => (
                       <li key={factor}>{factor}</li>
                     ))}
                   </ul>
@@ -121,7 +124,7 @@ export function Investigations() {
                   <span className="muted">Recommended action:</span> <strong>{inv.recommendedAction}</strong>
                 </p>
               )}
-              {inv.findings.length > 0 && (
+              {findings.length > 0 && (
                 <table>
                   <thead>
                     <tr>
@@ -133,7 +136,7 @@ export function Investigations() {
                     </tr>
                   </thead>
                   <tbody>
-                    {inv.findings.map((f) => (
+                    {findings.map((f) => (
                       <tr key={f.id} style={{ cursor: 'default' }}>
                         <td>
                           <RiskBadge level={f.severity === 'info' ? 'low' : f.severity} />
@@ -152,11 +155,11 @@ export function Investigations() {
             </>
           )}
 
-          {inv.toolTrace.length > 0 && (
+          {toolTrace.length > 0 && (
             <details style={{ marginTop: '0.75rem' }}>
-              <summary className="muted">Agent tool calls ({inv.toolTrace.length})</summary>
+              <summary className="muted">Agent tool calls ({toolTrace.length})</summary>
               <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
-                {inv.toolTrace.map((call) => (
+                {toolTrace.map((call) => (
                   <li key={call.seq}>
                     {call.seq}. {call.tool} [{call.status}] {call.summary} ({call.durationMs}ms)
                   </li>
@@ -165,7 +168,8 @@ export function Investigations() {
             </details>
           )}
         </div>
-      ))}
+        );
+      })}
     </>
   );
 }
