@@ -251,3 +251,33 @@ Verified manually (not via an automated suite): frontend pages via browser inter
 - Prefer small, focused changes over large rewrites.
 - Keep frontend, backend, and database contracts consistent — when a shape in `packages/shared` changes, update all three consumers (`apps/web`, `workers/api`, `spacetime/module`) in the same change.
 - Update this file and `README.md` when the architecture changes (e.g. once Frontend↔Worker or Worker↔SpacetimeDB integration lands, move the relevant bullet from "not yet integrated" to "works").
+
+## 12. Subagent Delegation Policy
+
+The main Claude Code conversation is responsible
+for project coordination and task management.
+
+Do not automatically invoke custom subagents.
+
+Only invoke a custom subagent when:
+1. The user explicitly requests the agent by name.
+2. The user approves a proposed delegation.
+
+Agent assignments (definitions live in `.claude/agents/`):
+
+- frontend-engineer: Approved frontend implementation.
+- qa-engineer: Functional, regression, and browser testing.
+- security-reviewer: Read-only security assessment.
+- backend-engineer: Approved backend and AI integration changes.
+
+Rules:
+
+1. Never spawn multiple agents to modify the same files.
+2. Prefer sequential implementation when tasks are dependent.
+3. Read-only reviews may be delegated independently.
+4. Do not spawn an agent for simple single-file changes.
+5. Avoid unnecessary parallel execution.
+6. The main conversation must review agent findings
+   before accepting changes.
+7. Preserve existing functionality and run relevant tests.
+8. Do not automatically invoke Red Team or Blue Team.
