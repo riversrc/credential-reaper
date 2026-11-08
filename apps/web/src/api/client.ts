@@ -10,8 +10,10 @@ import type {
   Investigation,
   InvestigationEvent,
   MachineIdentity,
+  OwnershipUpdateRequest,
   PermissionGrant,
   RemediationPlan,
+  RepositoryEvidence,
   SecurityEvent,
   StartInvestigationRequest,
   UsageEvent,
@@ -68,8 +70,13 @@ export function fetchIdentityDetail(id: string): Promise<{
   dependencies: IdentityDependency[];
   credentials: CredentialMetadata[];
   usageHistory: UsageEvent[];
+  repository: RepositoryEvidence | null;
 }> {
   return request(`/api/identities/${encodeURIComponent(id)}`);
+}
+
+export function updateOwnership(id: string, body: OwnershipUpdateRequest): Promise<{ identity: MachineIdentity }> {
+  return request(`/api/identities/${encodeURIComponent(id)}/ownership`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function fetchInvestigations(): Promise<Investigation[]> {

@@ -15,6 +15,11 @@ const STATUS_OPTIONS = [
   { value: 'orphaned', label: 'Orphaned' },
   { value: 'retired', label: 'Retired' },
 ];
+const SOURCE_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'repository', label: 'Repository' },
+  { value: 'seeded-demo', label: 'Seeded demo' },
+];
 const TYPE_OPTIONS = [{ value: 'all', label: 'All' }, ...(Object.keys(TYPE_LABEL) as IdentityType[]).map((t) => ({ value: t, label: TYPE_LABEL[t] }))];
 
 export function TheGrid() {
@@ -22,6 +27,7 @@ export function TheGrid() {
   const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
 
   useEffect(() => {
     fetchIdentities()
@@ -29,14 +35,21 @@ export function TheGrid() {
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
-  const shown = identities?.filter((i) => (typeFilter === 'all' || i.type === typeFilter) && (statusFilter === 'all' || i.status === statusFilter));
+  const shown = identities?.filter((i) => (typeFilter === 'all' || i.type === typeFilter) && (statusFilter === 'all' || i.status === statusFilter) && (sourceFilter === 'all' || i.dataSource === sourceFilter));
+  const repoCount = identities?.filter((i) => i.dataSource === 'repository').length ?? 0;
+  const demoCount = (identities?.length ?? 0) - repoCount;
 
   return (
     <>
       <div className="page-header">
         <div className="page-header-row">
           <h1>The Grid</h1>
-          <DemoChip />
+          {demoCount > 0 && <DemoChip />}
+          {repoCount > 0 && (
+            <span className="src-tag src-repo" title="Identities discovered by scanning a repository">
+              {repoCount} from repository
+            </span>
+          )}
         </div>
         <p>Every machine identity on record.</p>
       </div>
@@ -50,6 +63,7 @@ export function TheGrid() {
           <div className="filter-bar" style={{ marginBottom: '1rem' }}>
             <FilterSelect label="Type" value={typeFilter} options={TYPE_OPTIONS} onChange={setTypeFilter} />
             <FilterSelect label="Status" value={statusFilter} options={STATUS_OPTIONS} onChange={setStatusFilter} />
+            {repoCount > 0 && <FilterSelect label="Source" value={sourceFilter} options={SOURCE_OPTIONS} onChange={setSourceFilter} />}
             <span className="muted-sm" role="status">
               {shown?.length} of {identities.length} shown
             </span>

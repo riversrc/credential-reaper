@@ -6,10 +6,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "scan:repo": "node scripts/scan-repo.ts",
+    "test:scan": "node --test scripts/test-scan-arasaka.ts",
+    "test:ingest": "node --test scripts/test-ingest-e2e.ts"
   },
   "dependencies": {
-    "@credential-reaper/shared": "workspace:*"
+    "@credential-reaper/shared": "workspace:*",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261107.1",

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { CredentialMetadata, IdentityDependency, MachineIdentity, PermissionGrant, UsageEvent } from '@credential-reaper/shared';
+import type { CredentialMetadata, IdentityDependency, MachineIdentity, PermissionGrant, RepositoryEvidence, UsageEvent } from '@credential-reaper/shared';
 import { fetchIdentityDetail } from '../api/client';
 import { RiskBadge, StatusBadge } from '../components/Badges';
 import { Panel } from '../components/Panel';
+import { RepositoryEvidencePanel } from '../components/RepositoryEvidencePanel';
+import { SourceTag, lastUsedLabel } from '../components/SourceTag';
 import { StateMessage } from '../components/StateMessage';
 
 interface DetailState {
@@ -12,6 +14,7 @@ interface DetailState {
   dependencies: IdentityDependency[];
   credentials: CredentialMetadata[];
   usageHistory: UsageEvent[];
+  repository: RepositoryEvidence | null;
 }
 
 function formatDateTime(iso: string | null) {
@@ -24,17 +27,19 @@ export function IdentityDetails() {
   const [data, setData] = useState<DetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const load = (identityId: string) => fetchIdentityDetail(identityId).then(setData).catch((e) => setError(String(e.message ?? e)));
+
   useEffect(() => {
     if (!id) return;
     setData(null);
     setError(null);
-    fetchIdentityDetail(id).then(setData).catch((e) => setError(String(e.message ?? e)));
+    void load(id);
   }, [id]);
 
   if (error) return <StateMessage kind="error">{error}</StateMessage>;
   if (!data) return <StateMessage kind="loading">loading identity…</StateMessage>;
 
-  const { identity, permissions, dependencies, credentials, usageHistory } = data;
+  const { identity, permissions, dependencies, credentials, usageHistory, repository } = data;
 
   return (
     <>
@@ -42,7 +47,10 @@ export function IdentityDetails() {
         Back to The Grid
       </Link>
       <div className="page-header">
-        <h1>{identity.name}</h1>
+        <div className="page-header-row">
+          <h1>{identity.name}</h1>
+          <SourceTag identity={identity} />
+        </div>
         <p>{identity.description}</p>
       </div>
 
@@ -60,7 +68,7 @@ export function IdentityDetails() {
             <dt>Created</dt>
             <dd>{formatDateTime(identity.createdAt)}</dd>
             <dt>Last used</dt>
-            <dd>{formatDateTime(identity.lastUsedAt)}</dd>
+            <dd>{lastUsedLabel(identity, formatDateTime)}</dd>
             <dt>Status</dt>
             <dd>
               <StatusBadge status={identity.status} />
@@ -148,8 +156,12 @@ export function IdentityDetails() {
         </Panel>
       </div>
 
+      {repository && id && <RepositoryEvidencePanel identity={identity} evidence={repository} onChanged={() => void load(id)} />}
+
       <Panel title="Usage history">
-        {usageHistory.length === 0 && <p className="muted">No usage events on record.</p>}
+        {usageHistory.length === 0 && (
+          <p className="muted">{identity.dataSource === 'repository' ? 'No runtime usage has been observed. Repository scans do not provide it.' : 'No usage events on record.'}</p>
+        )}
         {usageHistory.length > 0 && (
           <div className="table-wrap">
             <table>

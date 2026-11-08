@@ -328,7 +328,11 @@ export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext, options: T
             resultCounts,
             distinctSources: [...new Set(sorted.map((e) => e.source))],
             events: sorted.slice(0, limit),
-            note: 'The retention window of the usage log is unknown; an empty log is not proof of no use.',
+            runtimeEvidenceAvailable: identity.dataSource !== 'repository',
+            note:
+              identity.dataSource === 'repository'
+                ? 'This identity comes from repository declarations. No runtime usage data has ever been collected for it, so its usage is UNKNOWN, not zero.'
+                : 'The retention window of the usage log is unknown; an empty log is not proof of no use.',
           },
           summary: `${sorted.length} event(s), idle ${daysSince(lastActivity, now) ?? 'unknown'} day(s)`,
         };

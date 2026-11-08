@@ -6,7 +6,8 @@ export type AuditAction =
   | 'remediation-approved'
   | 'remediation-simulated'
   | 'remediation-rejected'
-  | 'identity-retired';
+  | 'identity-retired'
+  | 'ownership-curated';
 
 /** An entry in "The Afterlife" — history of investigations and remediation events. */
 export interface AuditEvent {

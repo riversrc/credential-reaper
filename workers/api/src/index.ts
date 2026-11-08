@@ -20,6 +20,8 @@ import {
   simulateRemediationRow,
 } from './spacetime/repository.js';
 import { openEventStream, parseEventId } from './stream.js';
+import { fetchRepoScans, fetchRepositoryEvidence, ingestScan, updateOwnership } from './sync/store.ts';
+import { MAX_SCAN_BODY_CHARS, validateScan } from './sync/validate.ts';
 
 export interface Env extends AiProviderEnv, SpacetimeEnv {}
 
@@ -171,6 +173,46 @@ async function handleRemediationTransition(
   return json(updated ?? { ...plan });
 }
 
+async function handleRepositoryScan(request: Request, env: Env): Promise<Response> {
+  const text = await request.text();
+  if (text.length > MAX_SCAN_BODY_CHARS) return apiError(413, 'payload_too_large', `Scan body is larger than ${MAX_SCAN_BODY_CHARS} characters.`);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return badRequest('Request body must be valid JSON.');
+  }
+  const result = validateScan(parsed);
+  if (!result.ok) return json({ error: 'invalid_scan', message: 'The scan is malformed or unsupported. Nothing was stored.', problems: result.problems }, { status: 400 });
+  return json(await ingestScan(env, result.scan, new Date()), { status: 201 });
+}
+
+async function handleOwnershipUpdate(request: Request, env: Env, identityId: string): Promise<Response> {
+  const body = await readJsonObject(request, true);
+  if (body instanceof Response) return body;
+  const actor = body.actor === undefined ? DEFAULT_ACTOR : body.actor;
+  if (!validName(actor)) return badRequest(`actor must be 1-${MAX_ACTOR_CHARS} characters without control characters.`);
+
+  const identity = (await fetchIdentityDetail(env, identityId))?.identity;
+  if (!identity) return notFound(`Identity ${identityId} not found`);
+  if (identity.dataSource !== 'repository') return conflict('Only repository-discovered identities have repository-managed ownership.');
+
+  const revert = body.revert === true;
+  if (!revert) {
+    if (!validName(body.owner)) return badRequest(`owner must be 1-${MAX_ACTOR_CHARS} characters without control characters.`);
+    if (body.team !== undefined && (typeof body.team !== 'string' || body.team.length > MAX_ACTOR_CHARS || CONTROL_CHARS.test(body.team))) {
+      return badRequest(`team must be a string of at most ${MAX_ACTOR_CHARS} characters without control characters.`);
+    }
+  }
+  const updated = await updateOwnership(
+    env,
+    identity,
+    { owner: revert ? '' : (body.owner as string).trim(), team: revert ? '' : ((body.team as string | undefined) ?? identity.team).trim(), revert, actor: actor.trim() },
+    new Date()
+  );
+  return json({ identity: updated });
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const { pathname } = url;
@@ -193,8 +235,18 @@ async function route(request: Request, env: Env): Promise<Response> {
     if (!ID_PATTERN.test(id)) return badRequest('Invalid identity id.');
     const detail = await fetchIdentityDetail(env, id);
     if (!detail) return notFound(`Identity ${id} not found`);
-    return json(detail);
+    return json({ ...detail, repository: await fetchRepositoryEvidence(env, detail.identity) });
   }
+
+  const ownershipMatch = pathname.match(/^\/api\/identities\/([^/]+)\/ownership$/);
+  if (ownershipMatch && method === 'POST') {
+    const id = ownershipMatch[1]!;
+    if (!ID_PATTERN.test(id)) return badRequest('Invalid identity id.');
+    return handleOwnershipUpdate(request, env, id);
+  }
+
+  if (pathname === '/api/repository/scans' && method === 'POST') return handleRepositoryScan(request, env);
+  if (pathname === '/api/repository/scans' && method === 'GET') return json(await fetchRepoScans(env));
 
   if (pathname === '/api/investigations' && method === 'GET') {
     return json(await fetchInvestigations(env));

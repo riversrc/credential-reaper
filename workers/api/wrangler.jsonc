@@ -13,7 +13,7 @@
   //                           put it in workers/api/.dev.vars (gitignored).
   // Optional var/secret:
   //   NEMOTRON_MODEL        - overrides the default
-  //                           nvidia/nemotron-3-super-120b-a12b
+  //                           nvidia/nemotron-3.5-super-vl-120b-a12b
   //   SPACETIME_AUTH_TOKEN  - optional; only needed once the module requires
   //                           authenticated calls (e.g. on Maincloud). Local
   //                           dev modules are public and work without it.

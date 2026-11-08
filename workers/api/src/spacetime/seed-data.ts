@@ -6,7 +6,7 @@
 // not a Worker-local flag), so it survives Worker restarts.
 import type { CredentialMetadata, IdentityDependency, MachineIdentity, PermissionGrant, UsageEvent } from '@credential-reaper/shared';
 
-export const seedIdentities: MachineIdentity[] = [
+export const seedIdentities: Omit<MachineIdentity, 'dataSource' | 'ownerSource' | 'repoState'>[] = [
   {
     id: 'id-001',
     name: 'payments-svc-prod',

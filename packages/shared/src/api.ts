@@ -3,6 +3,8 @@ import type { Investigation, StartInvestigationRequest } from './investigation.j
 import type { RemediationPlan } from './remediation.js';
 import type { AuditEvent } from './audit.js';
 import type { InvestigationEvent, RemediationDecisionRequest, SecurityEvent } from './activity.js';
+import type { RepositoryScan } from './repository-scan.js';
+import type { OwnershipUpdateRequest, RepositoryEvidence, RepositoryIngestResponse, RepositoryScanRecord } from './repository-sync.js';
 
 /** Contract for the Cloudflare Worker API consumed by the frontend. */
 export interface ApiRoutes {
@@ -14,6 +16,8 @@ export interface ApiRoutes {
       dependencies: IdentityDependency[];
       credentials: CredentialMetadata[];
       usageHistory: UsageEvent[];
+      /** Present only for identities discovered by a repository scan. */
+      repository: RepositoryEvidence | null;
     };
   };
   'GET /api/investigations': { response: Investigation[] };
@@ -30,6 +34,12 @@ export interface ApiRoutes {
    * close; EventSource resumes from the last id). Comment lines `: ping` are heartbeats.
    */
   'GET /api/events/stream': { query: { investigationId?: string; invAfter?: number; secAfter?: number }; response: never };
+  /** 400 malformed or unsupported scan (with a list of problems), 413 body over 5 MB. Idempotent: re-sending the same scan changes nothing. */
+  'POST /api/repository/scans': { body: RepositoryScan; response: RepositoryIngestResponse };
+  /** Ingestion history, newest first. */
+  'GET /api/repository/scans': { response: RepositoryScanRecord[] };
+  /** Pin ownership (`owner`, `team`) as curated, or `revert: true` to hand it back to the repository declaration. */
+  'POST /api/identities/:id/ownership': { body: OwnershipUpdateRequest; response: { identity: MachineIdentity } };
   /** 409 unless the plan is `proposed`. */
   'POST /api/remediation-plans/:id/approve': { body?: RemediationDecisionRequest; response: RemediationPlan };
   'POST /api/remediation-plans/:id/reject': { body?: RemediationDecisionRequest; response: RemediationPlan };

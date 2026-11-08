@@ -10,6 +10,7 @@ export const ACTION_TITLE: Record<AuditEvent['action'], string> = {
   'remediation-simulated': 'Remediation simulated',
   'remediation-rejected': 'Remediation rejected',
   'identity-retired': 'Identity retired',
+  'ownership-curated': 'Ownership updated',
 };
 
 export interface HistoryEntry {
