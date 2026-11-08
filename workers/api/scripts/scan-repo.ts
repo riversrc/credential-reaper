@@ -18,7 +18,9 @@ if (!target || (outIndex >= 0 && !outPath)) {
 }
 
 const root = resolve(target);
-const scan = scanRepository(fsSource(root), { repo: repoName(root), commitSha: gitSha(root) });
+const source = fsSource(root);
+const scan = scanRepository(source, { repo: repoName(root), commitSha: gitSha(root) });
+if (source.incomplete) scan.status = 'partial';
 
 console.log(`Repository  ${scan.repo}`);
 console.log(`Commit      ${scan.commitSha ?? '(not a git checkout)'}`);

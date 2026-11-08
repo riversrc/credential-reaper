@@ -20,23 +20,26 @@ import {
   simulateRemediationRow,
 } from './spacetime/repository.js';
 import { openEventStream, parseEventId } from './stream.js';
-import { fetchRepoScans, fetchRepositoryEvidence, ingestScan, updateOwnership } from './sync/store.ts';
+import { fetchRepoScans, fetchRepositoryEvidence, hasUnfinishedScan, ingestScan, updateOwnership } from './sync/store.ts';
 import { MAX_SCAN_BODY_CHARS, validateScan } from './sync/validate.ts';
 
-export interface Env extends AiProviderEnv, SpacetimeEnv {}
+export interface Env extends AiProviderEnv, SpacetimeEnv {
+  /** Secret. Bearer token required by POST /api/repository/scans; ingest is refused (503) while unset. */
+  INGEST_TOKEN?: string;
+  /** Comma-separated browser origins allowed to call the API. */
+  ALLOWED_ORIGINS?: string;
+}
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+const DEFAULT_ALLOWED_ORIGINS = 'http://localhost:5173,http://localhost:5174';
+const OPERATOR_ACTOR = 'web-operator';
+const MAX_SCAN_IDENTITIES = 500;
+const SCAN_BODY_LIMIT_MESSAGE = `Scan body is larger than ${MAX_SCAN_BODY_CHARS} characters.`;
 
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 const MAX_BODY_CHARS = 10_000;
 const MAX_ACTOR_CHARS = 100;
-const DEFAULT_ACTOR = 'operator';
 const DEFAULT_SECURITY_EVENT_LIMIT = 100;
 /** A 'running' investigation younger than this blocks a new one for the same identity (keeps repeat clicks from burning model calls). Older ones are treated as stale. Keep in sync with the module's startInvestigation. */
 const RUNNING_INVESTIGATION_WINDOW_MS = 200_000;
@@ -44,7 +47,7 @@ const RUNNING_INVESTIGATION_WINDOW_MS = 200_000;
 function json(data: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(data), {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS, ...init.headers },
+    headers: { 'Content-Type': 'application/json', ...init.headers },
   });
 }
 
@@ -57,9 +60,34 @@ const badRequest = (message: string) => apiError(400, 'bad_request', message);
 const conflict = (message: string) => apiError(409, 'conflict', message);
 const badGateway = () => apiError(502, 'spacetimedb_unavailable', 'The data store is unavailable.');
 const internalError = () => apiError(500, 'internal_error', 'Something went wrong.');
+const unsupportedMediaType = () => apiError(415, 'unsupported_media_type', 'Content-Type must be application/json.');
+
+function allowedOrigins(env: Env): string[] {
+  return (env.ALLOWED_ORIGINS ?? DEFAULT_ALLOWED_ORIGINS).split(',').map((o) => o.trim()).filter(Boolean);
+}
+
+const isJson = (request: Request) => request.headers.get('Content-Type')?.split(';')[0]?.trim().toLowerCase() === 'application/json';
+
+/** Constant-time string comparison: both sides are hashed first so neither the content nor the length leaks through timing. */
+async function safeEqual(a: string, b: string): Promise<boolean> {
+  const digest = async (s: string) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+  const [x, y] = await Promise.all([digest(a), digest(b)]);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i]! ^ y[i]!;
+  return diff === 0;
+}
+
+/** Fails closed: with no INGEST_TOKEN configured nothing can be ingested. */
+async function ingestAuthFailure(request: Request, env: Env): Promise<Response | null> {
+  if (!env.INGEST_TOKEN) return apiError(503, 'ingest_unavailable', 'Repository ingest is not available.');
+  const match = request.headers.get('Authorization')?.match(/^Bearer (.+)$/);
+  if (!match || !(await safeEqual(match[1]!, env.INGEST_TOKEN))) return apiError(401, 'unauthorized', 'Authentication required.');
+  return null;
+}
 
 /** Reads an optional JSON object body. Returns a Response on failure so the caller can return it directly. */
 async function readJsonObject(request: Request, required: boolean): Promise<Record<string, unknown> | Response> {
+  if (!isJson(request)) return unsupportedMediaType();
   const text = await request.text();
   if (text.length > MAX_BODY_CHARS) return badRequest('Request body is too large.');
   if (text.trim() === '') return required ? badRequest('A JSON body is required.') : {};
@@ -144,9 +172,8 @@ async function handleRemediationTransition(
 ): Promise<Response> {
   const body = await readJsonObject(request, false);
   if (body instanceof Response) return body;
-  // The actor is client-supplied and unauthenticated until real auth lands.
-  const actor = body.actor === undefined ? DEFAULT_ACTOR : body.actor;
-  if (!validName(actor)) return badRequest(`actor must be 1-${MAX_ACTOR_CHARS} characters without control characters.`);
+  // Any actor in the body is ignored: it is client-supplied and unauthenticated until real auth lands.
+  const actor = OPERATOR_ACTOR;
 
   const required = action === 'simulate' ? 'approved' : 'proposed';
   const mismatch = (plan: RemediationPlan) =>
@@ -159,8 +186,8 @@ async function handleRemediationTransition(
   const at = new Date().toISOString();
   try {
     // Dry run / bookkeeping only: none of these reducers calls any IdP or secrets manager.
-    if (action === 'simulate') await simulateRemediationRow(env, planId, at, actor.trim());
-    else await decideRemediationRow(env, action, planId, at, actor.trim());
+    if (action === 'simulate') await simulateRemediationRow(env, planId, at, actor);
+    else await decideRemediationRow(env, action, planId, at, actor);
   } catch (e) {
     if (e instanceof SpacetimeError && e.status === REDUCER_REJECTED_STATUS) {
       const current = await fetchRemediationPlan(env, planId);
@@ -174,8 +201,13 @@ async function handleRemediationTransition(
 }
 
 async function handleRepositoryScan(request: Request, env: Env): Promise<Response> {
+  const denied = await ingestAuthFailure(request, env);
+  if (denied) return denied;
+  if (!isJson(request)) return unsupportedMediaType();
+  const declared = Number(request.headers.get('Content-Length'));
+  if (declared > MAX_SCAN_BODY_CHARS) return apiError(413, 'payload_too_large', SCAN_BODY_LIMIT_MESSAGE);
   const text = await request.text();
-  if (text.length > MAX_SCAN_BODY_CHARS) return apiError(413, 'payload_too_large', `Scan body is larger than ${MAX_SCAN_BODY_CHARS} characters.`);
+  if (text.length > MAX_SCAN_BODY_CHARS) return apiError(413, 'payload_too_large', SCAN_BODY_LIMIT_MESSAGE);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -184,14 +216,24 @@ async function handleRepositoryScan(request: Request, env: Env): Promise<Respons
   }
   const result = validateScan(parsed);
   if (!result.ok) return json({ error: 'invalid_scan', message: 'The scan is malformed or unsupported. Nothing was stored.', problems: result.problems }, { status: 400 });
-  return json(await ingestScan(env, result.scan, new Date()), { status: 201 });
+  if (result.scan.machineIdentities.length > MAX_SCAN_IDENTITIES) {
+    return apiError(413, 'payload_too_large', `A scan may declare at most ${MAX_SCAN_IDENTITIES} identities.`);
+  }
+  const now = new Date();
+  if (await hasUnfinishedScan(env, result.scan.repo, now)) return conflict('Another scan of this repository is still running. Try again shortly.');
+  try {
+    return json(await ingestScan(env, result.scan, now), { status: 201 });
+  } catch (e) {
+    if (e instanceof SpacetimeError && e.status === REDUCER_REJECTED_STATUS && (await hasUnfinishedScan(env, result.scan.repo, now))) {
+      return conflict('Another scan of this repository is still running. Try again shortly.');
+    }
+    throw e;
+  }
 }
 
 async function handleOwnershipUpdate(request: Request, env: Env, identityId: string): Promise<Response> {
   const body = await readJsonObject(request, true);
   if (body instanceof Response) return body;
-  const actor = body.actor === undefined ? DEFAULT_ACTOR : body.actor;
-  if (!validName(actor)) return badRequest(`actor must be 1-${MAX_ACTOR_CHARS} characters without control characters.`);
 
   const identity = (await fetchIdentityDetail(env, identityId))?.identity;
   if (!identity) return notFound(`Identity ${identityId} not found`);
@@ -207,7 +249,7 @@ async function handleOwnershipUpdate(request: Request, env: Env, identityId: str
   const updated = await updateOwnership(
     env,
     identity,
-    { owner: revert ? '' : (body.owner as string).trim(), team: revert ? '' : ((body.team as string | undefined) ?? identity.team).trim(), revert, actor: actor.trim() },
+    { owner: revert ? '' : (body.owner as string).trim(), team: revert ? '' : ((body.team as string | undefined) ?? identity.team).trim(), revert, actor: OPERATOR_ACTOR },
     new Date()
   );
   return json({ identity: updated });
@@ -296,7 +338,7 @@ async function route(request: Request, env: Env): Promise<Response> {
       env,
       request,
       { investigationId, invAfter: resume ? resume.inv : invAfter, secAfter: resume ? resume.sec : secAfter },
-      CORS_HEADERS
+      {}
     );
   }
 
@@ -320,18 +362,37 @@ function logError(event: string, e: unknown, method: string, pathname: string): 
   console.error(JSON.stringify({ event, method, pathname, name: err.name, message: err.message.slice(0, 200), upstreamStatus: e instanceof SpacetimeError ? e.status : undefined }));
 }
 
+/** Echoes the caller's origin only when it is allowlisted; other origins get no CORS headers at all. */
+function withCors(response: Response, origin: string | null, allowed: boolean): Response {
+  const out = new Response(response.body, response);
+  out.headers.append('Vary', 'Origin');
+  if (origin && allowed) {
+    out.headers.set('Access-Control-Allow-Origin', origin);
+    out.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    out.headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  return out;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const origin = request.headers.get('Origin');
+    const allowed = origin !== null && allowedOrigins(env).includes(origin);
+
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS_HEADERS });
+      return withCors(new Response(null, { status: origin === null || allowed ? 204 : 403 }), origin, allowed);
+    }
+    // Requests without an Origin (curl, scripts) pass; a browser always sends one on cross-site POSTs.
+    if (request.method === 'POST' && origin !== null && !allowed) {
+      return withCors(apiError(403, 'forbidden_origin', 'This origin is not allowed.'), origin, false);
     }
 
     try {
-      return await route(request, env);
+      return withCors(await route(request, env), origin, allowed);
     } catch (e) {
       const url = new URL(request.url);
       logError('unhandled_error', e, request.method, url.pathname);
-      return e instanceof SpacetimeError ? badGateway() : internalError();
+      return withCors(e instanceof SpacetimeError ? badGateway() : internalError(), origin, allowed);
     }
   },
 } satisfies ExportedHandler<Env>;

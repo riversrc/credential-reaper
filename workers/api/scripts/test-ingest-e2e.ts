@@ -1,7 +1,7 @@
 // End-to-end Repository Sync checks against a RUNNING Worker + SpacetimeDB. This writes to the database the
 // Worker points at (scans, repository identities, and a temporary curated owner), so INGEST_TEST_API must be set
 // explicitly and should target a sync/test database. Scenarios come from the Arasaka repo's own patches.
-//   INGEST_TEST_API=http://localhost:8788 node --test scripts/test-ingest-e2e.ts
+//   INGEST_TOKEN=<worker's INGEST_TOKEN> INGEST_TEST_API=http://localhost:8788 node --test scripts/test-ingest-e2e.ts
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -16,7 +16,8 @@ const API = process.env.INGEST_TEST_API;
 const REPO = process.env.ARASAKA_REPO ?? '/home/riversrc/credential-reaper-demo-app';
 const REF = process.env.ARASAKA_REF ?? 'demo';
 const REPO_NAME = 'riversrc/credential-reaper-demo-app';
-const available = !!API && existsSync(join(REPO, 'scenarios'));
+const INGEST_TOKEN = process.env.INGEST_TOKEN;
+const available = !!API && !!INGEST_TOKEN && existsSync(join(REPO, 'scenarios'));
 const temps: string[] = [];
 
 after(() => {
@@ -37,7 +38,12 @@ async function call<T>(path: string, init?: RequestInit): Promise<{ status: numb
   const res = await fetch(`${API}${path}`, init);
   return { status: res.status, body: (await res.json()) as T };
 }
-const post = (path: string, body: unknown) => call<any>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const post = (path: string, body: unknown) =>
+  call<any>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(path === '/api/repository/scans' ? { Authorization: `Bearer ${INGEST_TOKEN}` } : {}) },
+    body: JSON.stringify(body),
+  });
 const ingest = async (s: RepositoryScan) => {
   const r = await post('/api/repository/scans', s);
   assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -48,7 +54,7 @@ const repoIdentities = async () => (await identities()).filter((i) => i.dataSour
 const detail = async (id: string) => (await call<{ identity: MachineIdentity; permissions: unknown[]; credentials: unknown[]; usageHistory: unknown[]; repository: RepositoryEvidence | null }>(`/api/identities/${id}`)).body;
 const present = (r: RepositoryScanRecord, list: string) => r.persisted[`${list}:present`] ?? 0;
 
-describe('Repository Sync end to end', { skip: !available && 'set INGEST_TEST_API and provide an Arasaka checkout' }, () => {
+describe('Repository Sync end to end', { skip: !available && 'set INGEST_TEST_API and INGEST_TOKEN and provide an Arasaka checkout' }, () => {
   it('persists the baseline: 44 identities, every list, and the demo data is untouched', async () => {
     const before = (await identities()).filter((i) => i.dataSource === 'seeded-demo').length;
     const r = await ingest(scan(null));

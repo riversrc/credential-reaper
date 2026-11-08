@@ -16,6 +16,31 @@ const CONFIDENCES = ['high', 'medium', 'low'];
 const WARNING_CODES = ['parse-error', 'missing-source', 'unknown-reference', 'cross-source-mismatch', 'duplicate-key', 'secret-flag'];
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const REPO_PATTERN = /^[A-Za-z0-9._/-]{1,200}$/;
+// Mask shape: a short prefix, a run of '*', a short suffix. Anything longer could carry a real secret.
+const MASK_PATTERN = /^[^*]{0,8}\*{4,}[^*]{0,4}$/;
+const MAX_MASK_CHARS = 40;
+// Conservative reference grammar for storage / secretRef / secretRefEnv: a URI-ish location, a name or an env var.
+const REFERENCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,199}$/;
+const SECRET_PATTERNS = [
+  /\bgh[pousr]_[A-Za-z0-9]{10,}/,
+  /github_pat_[A-Za-z0-9_]{20,}/,
+  /\bsk-[A-Za-z0-9]{20,}/,
+  /\bnvapi-[A-Za-z0-9_-]{20,}/,
+  /\bAKIA[0-9A-Z]{16}/,
+  /\bxox[abp]-/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /[0-9a-fA-F]{32,}/,
+];
+const LONG_TOKEN = /[A-Za-z0-9+]{32,}/g;
+
+/** True for strings that look like a credential. Never echo the value in an error. */
+export function looksLikeSecret(value: string): boolean {
+  if (SECRET_PATTERNS.some((re) => re.test(value))) return true;
+  // High-entropy base64-ish run: mixed case and digits distinguishes it from long identifiers.
+  return (value.match(LONG_TOKEN) ?? []).some((tok) => /[a-z]/.test(tok) && /[A-Z]/.test(tok) && /\d/.test(tok));
+}
+
+export const isMaskedPreview = (v: string): boolean => v.length <= MAX_MASK_CHARS && MASK_PATTERN.test(v);
 
 type FieldSpec = 's' | 's?' | 'b' | 'n' | 'n?' | 'S' | { object: Spec } | { objects: Spec };
 type Spec = Record<string, FieldSpec>;
@@ -80,6 +105,11 @@ function readString(v: unknown, path: string, p: Problems, nullable: boolean): s
     p.add(path, `longer than ${MAX_STRING} characters`);
     return null;
   }
+  // A commit SHA is legitimately long hex; it is validated separately.
+  if (!path.endsWith('commitSha') && looksLikeSecret(v)) {
+    p.add(path, 'contains a value that looks like a secret; nothing was stored');
+    return null;
+  }
   return v;
 }
 
@@ -136,6 +166,7 @@ function readProvenance(raw: unknown, repo: string, path: string, p: Problems) {
   return raw.map((item, i) => {
     const at = `${path}[${i}]`;
     const o = readObject(item, { repo: 's', sourcePath: 's', commitSha: 's?', discoveredAt: 's', evidenceType: 's', confidence: 's' }, at, p);
+    if (o.commitSha !== null && !/^[0-9a-f]{7,64}$/.test(String(o.commitSha ?? ''))) p.add(`${at}.commitSha`, 'must be a lowercase hex git SHA or null');
     if (o.repo !== repo) p.add(`${at}.repo`, `must equal the scan repo "${repo}"`);
     if (!EVIDENCE_TYPES.includes(o.evidenceType as string)) p.add(`${at}.evidenceType`, `unsupported evidence type; expected ${EVIDENCE_TYPES.join(' or ')}`);
     if (!CONFIDENCES.includes(o.confidence as string)) p.add(`${at}.confidence`, `must be one of ${CONFIDENCES.join(', ')}`);
@@ -190,7 +221,13 @@ export function validateScan(input: unknown): ValidationResult {
     if (!ID_PATTERN.test(identity.id ?? '')) p.add(`${at}.id`, 'must match [A-Za-z0-9._:-]{1,64}');
     if (!IDENTITY_TYPES.includes(identity.type)) p.add(`${at}.type`, `unsupported identity type "${identity.type}"; expected one of ${IDENTITY_TYPES.join(', ')}`);
     const masked = identity.credential?.maskedPreview;
-    if (masked && !masked.includes('*')) p.add(`${at}.credential.maskedPreview`, 'must be a masked preview (contain "*"); a value that may be a real secret is refused');
+    if (masked && !isMaskedPreview(masked)) {
+      p.add(`${at}.credential.maskedPreview`, `must be a masked preview: up to 8 leading characters, 4 or more "*", up to 4 trailing characters, at most ${MAX_MASK_CHARS} in total`);
+    }
+    for (const field of ['storage', 'secretRef', 'secretRefEnv'] as const) {
+      const ref = (identity.credential as Record<string, string | null> | undefined)?.[field];
+      if (ref && !REFERENCE_PATTERN.test(ref)) p.add(`${at}.credential.${field}`, 'must be a reference (location or name), not a value');
+    }
   });
 
   const rawWarnings = Array.isArray(input.warnings) ? input.warnings : (p.add('warnings', 'must be an array'), []);

@@ -53,7 +53,8 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 /** Row ids written into the regular inventory tables. The `rp|` prefix marks them as repository-derived. */
-const grantId = (assignmentKey: string) => `rp|grant|${assignmentKey}`;
+/** Scoped by repo ('/' -> '~', which a repo name cannot contain) so one repo's assignment keys can never address another's grants. */
+const grantId = (repo: string, assignmentKey: string) => `rp|g:${repo.replaceAll('/', '~')}|${assignmentKey}`;
 const dependencyId = (identityId: string, serviceId: string) => `rp|dep|${identityId}|${serviceId}`;
 const credentialId = (identityId: string) => `rp|cred|${identityId}`;
 
@@ -64,7 +65,7 @@ export async function buildRecordInputs(scan: RepositoryScan): Promise<RecordInp
     for (const record of scan[list as keyof RepositoryScan] as unknown as { key: string; provenance: unknown[] }[]) {
       const { provenance, ...content } = record;
       const payload = JSON.stringify(content);
-      const projected = list === 'assignments' ? grantId(record.key) : list === 'machineIdentities' ? record.key : '';
+      const projected = list === 'assignments' ? grantId(scan.repo, record.key) : list === 'machineIdentities' ? record.key : '';
       out.push({ list, key: record.key, projected, hash: await sha256Hex(payload), payload, provenance: JSON.stringify(provenance) });
     }
   }
@@ -126,7 +127,7 @@ export function buildIdentitySync(scan: RepositoryScan, identity: ScannedIdentit
     .map((a) => {
       const permission = scan.permissions.find((p) => p.id === a.permissionId);
       return {
-        id: grantId(a.key),
+        id: grantId(scan.repo, a.key),
         resource: `${a.resource ?? permission?.resource ?? a.permissionId} (${a.permissionId})`,
         scope: permission?.level ?? permission?.action ?? a.permissionId,
         grantedAt: isoDate(a.grantedOn),

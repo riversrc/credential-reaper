@@ -24,6 +24,7 @@ const actionLabels: Record<AuditEvent['action'], string> = {
   'remediation-rejected': 'Remediation plan rejected',
   'identity-retired': 'Identity retired',
   'ownership-curated': 'Ownership updated',
+  'repo-scan-ingested': 'Repository scan ingested',
 };
 
 const markerClass = (action: AuditEvent['action']) =>

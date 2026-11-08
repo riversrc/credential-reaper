@@ -237,7 +237,7 @@ export function scanRepository(source: RepoSource, ctx: ScanContext): Repository
     if (t === null) continue;
     const serviceId = serviceFromPath(p);
     routesPathByService.set(serviceId, p);
-    for (const m of t.matchAll(/router\.(get|post|put|patch|delete|head|options)\(\s*(['"`])([^'"`]+)\2\s*,\s*\{([^}]*)\}/g)) {
+    for (const m of t.matchAll(/router\.(get|post|put|patch|delete|head|options)\(\s*(['"`])([^'"`]+)\2\s*,\s*\{([^}]{0,1000})\}/g)) {
       const method = m[1]!.toUpperCase();
       const path = m[3]!;
       const meta = m[4]!;

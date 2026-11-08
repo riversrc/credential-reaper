@@ -7,7 +7,8 @@ export type AuditAction =
   | 'remediation-simulated'
   | 'remediation-rejected'
   | 'identity-retired'
-  | 'ownership-curated';
+  | 'ownership-curated'
+  | 'repo-scan-ingested';
 
 /** An entry in "The Afterlife" — history of investigations and remediation events. */
 export interface AuditEvent {

@@ -11,6 +11,7 @@ import type { RepositoryScan } from '@credential-reaper/shared';
 import { diffScans } from '../src/sync/diff.ts';
 import type { ScanChange } from '../src/sync/diff.ts';
 import { scanRepository } from '../src/sync/scan.ts';
+import { validateScan } from '../src/sync/validate.ts';
 import { ARASAKA_EXPECTED } from './arasaka-expected.ts';
 import { fsSource } from './fs-source.ts';
 
@@ -307,5 +308,78 @@ describe('Scanner robustness', () => {
     const file = join(dir, 'scan.json');
     writeFileSync(file, JSON.stringify(scan));
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), scan);
+  });
+});
+
+describe('Scan validation hardening', () => {
+  const yaml = (credential: string) =>
+    scanRepository(
+      {
+        paths: ['inventory/manifest.yaml', 'inventory/identities/x.yaml'],
+        read: (p) =>
+          p === 'inventory/manifest.yaml'
+            ? 'schemaVersion: 1\nsources:\n  machineIdentities:\n    declarations: inventory/identities/*.yaml\n'
+            : `id: MI-0001\nname: x\ntype: api-key\ncredential:\n  containsRealSecret: false\n${credential}`,
+      },
+      { ...CTX, commitSha: 'abcdef1234567' }
+    );
+  const check = (credential: string) => validateScan(JSON.parse(JSON.stringify(yaml(credential))));
+
+  it('accepts a well-formed mask and reference', () => {
+    assert.equal(check('  storage: vault\n  secretRef: vault://prod/key-1\n  maskedPreview: "sk-live-****7f2a"\n').ok, true);
+    assert.equal(check('  secretRefEnv: SERVICE_API_KEY\n  maskedPreview: "sk-****abcd"\n').ok, true);
+  });
+
+  it('rejects masks that are not prefix, 4+ stars, short suffix', () => {
+    for (const mask of ['ghp_abcdefghijklmnopqrstuvwxyz0123456789ab*', 'abcdefghijk****', 'ab***cd', 'ab****cdefgh', 'ab****cd****']) {
+      assert.equal(check(`  maskedPreview: "${mask}"\n`).ok, false, mask);
+    }
+  });
+
+  it('rejects references that look like values and does not echo them', () => {
+    const r = check('  secretRef: "has spaces and = signs"\n');
+    assert.equal(r.ok, false);
+    assert.ok(!r.ok && !r.problems.join('\n').includes('has spaces'));
+  });
+
+  it('rejects well-known secret patterns anywhere in the payload without echoing them', () => {
+    const samples = [
+      'ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      'github_pat_11ABCDEFG0123456789_abcdefghijklmnop',
+      'sk-abcdefghijklmnopqrstuvwxyz',
+      'AKIAIOSFODNN7EXAMPLE',
+      'xoxb-123-456',
+      '-----BEGIN RSA PRIVATE KEY-----',
+      '0123456789abcdef0123456789abcdef',
+      'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5',
+    ];
+    for (const s of samples) {
+      const scan = JSON.parse(JSON.stringify(yaml('')));
+      scan.machineIdentities[0].purpose = `note ${s}`;
+      const r = validateScan(scan);
+      assert.equal(r.ok, false, s);
+      assert.ok(!r.ok && !r.problems.join('\n').includes(s), `echoed ${s}`);
+    }
+  });
+});
+
+describe('Provenance commitSha validation', () => {
+  it('rejects a provenance commitSha that is not a hex SHA', () => {
+    const scan = scanRepository(
+      {
+        paths: ['inventory/manifest.yaml', 'inventory/identities/x.yaml'],
+        read: (p) =>
+          p === 'inventory/manifest.yaml'
+            ? 'schemaVersion: 1\nsources:\n  machineIdentities:\n    declarations: inventory/identities/*.yaml\n'
+            : 'id: MI-0001\nname: x\ntype: api-key\ncredential:\n  containsRealSecret: false\n',
+      },
+      { ...CTX, commitSha: 'abcdef1234567' }
+    );
+    assert.equal(validateScan(JSON.parse(JSON.stringify(scan))).ok, true);
+    const bad = JSON.parse(JSON.stringify(scan));
+    bad.machineIdentities[0].provenance[0].commitSha = 'not-a-sha';
+    const r = validateScan(bad);
+    assert.equal(r.ok, false);
+    assert.ok(!r.ok && !r.problems.join('\n').includes('not-a-sha'));
   });
 });

@@ -12,7 +12,13 @@ if (!file) {
   process.exit(2);
 }
 
-const response = await fetch(`${api}/api/repository/scans`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: readFileSync(file, 'utf8') });
+const token = process.env.INGEST_TOKEN;
+if (!token) {
+  console.error('INGEST_TOKEN is not set. Export the same value the Worker was configured with.');
+  process.exit(2);
+}
+
+const response = await fetch(`${api}/api/repository/scans`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: readFileSync(file, 'utf8') });
 const body = (await response.json()) as RepositoryIngestResponse & { message?: string; problems?: string[] };
 if (!response.ok) {
   console.error(`Ingest failed (HTTP ${response.status}): ${body.message ?? 'unknown error'}`);

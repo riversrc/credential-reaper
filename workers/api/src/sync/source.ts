@@ -3,6 +3,8 @@
 export interface RepoSource {
   /** Every file path in the repository, relative to its root, using forward slashes. */
   paths: string[];
+  /** True when files were skipped or the listing was cut short, so absence from this source proves nothing. */
+  incomplete?: boolean;
   /** Returns UTF-8 text, or throws when the file cannot be read. */
   read(path: string): string;
 }

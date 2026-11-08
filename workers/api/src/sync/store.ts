@@ -17,11 +17,13 @@ import type {
   ScannedTeam,
 } from '@credential-reaper/shared';
 import { computeRisk } from '../agent/risk.ts';
-import { callReducer, encodeOption, sqlQuery, sqlString, type SpacetimeEnv } from '../spacetime/client.js';
+import { callReducer, encodeOption, REDUCER_REJECTED_STATUS, SpacetimeError, sqlQuery, sqlString, type SpacetimeEnv } from '../spacetime/client.js';
 import { fetchCredentials, fetchIdentities, fetchIdentity, fetchPermissions, fetchUsageEvents } from '../spacetime/repository.js';
 import { buildIdentitySync, buildRecordInputs, deriveStatus, ownerLabel, type RecordInput } from './project.ts';
 
 const CHUNK_CHARS = 200_000;
+/** An unfinished scan older than this is treated as abandoned. Keep in sync with the module's beginRepoScan. */
+export const STALE_SCAN_MS = 15 * 60_000;
 
 interface RepoScanRow {
   id: string;
@@ -80,6 +82,12 @@ export async function fetchRepoScans(env: SpacetimeEnv): Promise<RepositoryScanR
   return (await fetchScanRows(env)).map(toScanRecord);
 }
 
+/** True while another scan of the same repo started less than STALE_SCAN_MS ago and has not finished. */
+export async function hasUnfinishedScan(env: SpacetimeEnv, repo: string, now: Date): Promise<boolean> {
+  const rows = await sqlQuery<RepoScanRow>(env, `SELECT * FROM v_repo_scan WHERE repo = ${sqlString(repo)}`);
+  return rows.some((r) => !r.finished && now.getTime() - Date.parse(r.ingestedAt) < STALE_SCAN_MS);
+}
+
 function chunkRecords(records: RecordInput[]): RecordInput[][] {
   const chunks: RecordInput[][] = [];
   let current: RecordInput[] = [];
@@ -128,16 +136,23 @@ export async function ingestScan(env: SpacetimeEnv, scan: RepositoryScan, now: D
       continue;
     }
     const args = buildIdentitySync(scan, identity, current, now, scan.status === 'complete');
-    await callReducer(env, 'sync_repo_identity', {
-      ...args,
-      grants: args.grants.map(({ grantedAt, grantedBy, ...rest }) => ({ ...rest, granted_at: grantedAt, granted_by: grantedBy })),
-      lastRotatedAt: encodeOption(args.lastRotatedAt),
-      expiresAt: encodeOption(args.expiresAt),
-    });
-    synced++;
+    try {
+      await callReducer(env, 'sync_repo_identity', {
+        ...args,
+        repo: scan.repo,
+        grants: args.grants.map(({ grantedAt, grantedBy, ...rest }) => ({ ...rest, granted_at: grantedAt, granted_by: grantedBy })),
+        lastRotatedAt: encodeOption(args.lastRotatedAt),
+        expiresAt: encodeOption(args.expiresAt),
+      });
+      synced++;
+    } catch (e) {
+      // The module refuses to overwrite an identity that another repository owns; report it instead of aborting the scan.
+      if (!(e instanceof SpacetimeError && e.status === REDUCER_REJECTED_STATUS)) throw e;
+      skipped.push({ id: identity.id, reason: 'the data store refused it (the id may belong to another repository)' });
+    }
   }
 
-  await callReducer(env, 'finish_repo_scan', { scanId });
+  await callReducer(env, 'finish_repo_scan', { scanId, auditId: `audit-${scanId}`, securityId: `sec-${scanId}`, timestamp: ingestedAt });
   const row = (await sqlQuery<RepoScanRow>(env, `SELECT * FROM v_repo_scan WHERE id = ${sqlString(scanId)}`))[0];
   return { scan: toScanRecord(row), identities: { declared: scan.machineIdentities.length, synced, skipped } };
 }
@@ -172,9 +187,12 @@ function declaredFrom(ownership: ScannedIdentityOwnership | null, person: Scanne
 /** Everything stored about one repository identity, or null for identities that did not come from a scan. */
 export async function fetchRepositoryEvidence(env: SpacetimeEnv, identity: MachineIdentity): Promise<RepositoryEvidence | null> {
   if (identity.dataSource !== 'repository') return null;
+  // Legacy identities (empty sourceRepo) keep the unscoped lookup.
+  const sourceRepo = (identity as MachineIdentity & { sourceRepo?: string }).sourceRepo ?? '';
+  const inRepo = sourceRepo ? ` AND repo = ${sqlString(sourceRepo)}` : '';
   const found = await sqlQuery<RepoRecordRow>(
     env,
-    `SELECT * FROM v_repo_record WHERE list = 'machineIdentities' AND key = ${sqlString(identity.id)}`
+    `SELECT * FROM v_repo_record WHERE list = 'machineIdentities' AND key = ${sqlString(identity.id)}${inRepo}`
   );
   const identityRow = found[0];
   if (!identityRow) return null;
@@ -192,7 +210,7 @@ export async function fetchRepositoryEvidence(env: SpacetimeEnv, identity: Machi
   ];
   const [related, historyRows, scans] = await Promise.all([
     fetchRecordsById(env, repo, refs),
-    sqlQuery<RepoRecordRow>(env, `SELECT * FROM v_repo_record WHERE list = 'permissionHistory'`),
+    sqlQuery<RepoRecordRow>(env, `SELECT * FROM v_repo_record WHERE list = 'permissionHistory'${inRepo}`),
     fetchScanRows(env),
   ]);
   const byRef = (list: string, key: string | null) => (key ? related.find((r) => r.list === list && r.key === key) : undefined);

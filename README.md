@@ -120,17 +120,23 @@ and never retires a credential (a declaration that disappears is flagged
 cd workers/api
 node scripts/scan-repo.ts /home/riversrc/credential-reaper-demo-app --out /tmp/scn/scan.json
 
-# 2. Ingest it into a running Worker (idempotent: re-running adds nothing)
-node scripts/ingest-scan.ts /tmp/scn/scan.json --api http://localhost:8787
+# 2. Ingest it into a running Worker (idempotent: re-running adds nothing).
+#    INGEST_TOKEN must equal the Worker's INGEST_TOKEN secret (.dev.vars locally)
+INGEST_TOKEN=... node scripts/ingest-scan.ts /tmp/scn/scan.json --api http://localhost:8787
 
 # 3. Open The Grid; repository identities carry a REPO tag, seeded ones a DEMO tag
 ```
 
-Endpoints: `POST /api/repository/scans` (validates, then persists; 400
-`invalid_scan` on malformed or unsupported data), `GET /api/repository/scans`
+Endpoints: `POST /api/repository/scans` (requires `Authorization: Bearer $INGEST_TOKEN`, 401 without it, 503 while the Worker has no `INGEST_TOKEN`; validates, then persists; 400
+`invalid_scan` on malformed or unsupported data, 413 over 500 identities, 409 while another scan of the repo is running), `GET /api/repository/scans`
 (scan history), `POST /api/identities/:id/ownership` (set a curated owner, or
 `{"revert":true}` to follow the repository again). Identity details include a
 `repository` block with the commit SHA, source paths, evidence types and confidence.
+
+Browser-facing POSTs require `Content-Type: application/json` (else 415) and, if an
+`Origin` header is sent, one listed in `ALLOWED_ORIGINS` (comma-separated; default
+`http://localhost:5173,http://localhost:5174`; else 403). Requests without `Origin` (curl, scripts) pass.
+The audit `actor` for ownership and remediation actions is the fixed label `web-operator`; a body `actor` is ignored.
 
 Tests: `cd workers/api && pnpm test:scan` (scanner, no services needed) and
 `INGEST_TEST_API=http://localhost:8787 pnpm test:ingest` (end to end against a

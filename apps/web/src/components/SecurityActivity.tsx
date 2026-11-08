@@ -20,6 +20,7 @@ const TYPE_LABEL: Record<SecurityEventType, string> = {
   'remediation-approved': 'Remediation approved',
   'remediation-rejected': 'Remediation rejected',
   'remediation-simulated': 'Remediation simulated (dry run)',
+  'repo-scan-ingested': 'Repository scan ingested',
 };
 
 const KIND: Record<SecurityEventKind, { label: string; title: string }> = {

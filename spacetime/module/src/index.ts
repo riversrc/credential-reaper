@@ -62,6 +62,8 @@ const machineIdentity = table(
     dataSource: t.string().default('seeded-demo'),
     ownerSource: t.string().default('seeded'),
     repoState: t.string().default('none'),
+    // Repo that last synced this identity ('' for non-repository rows and rows predating this column).
+    sourceRepo: t.string().default(''),
   }
 );
 
@@ -367,6 +369,7 @@ export const seedIdentity = spacetimedb.reducer(
       dataSource: 'seeded-demo',
       ownerSource: 'seeded',
       repoState: 'none',
+      sourceRepo: '',
     });
   }
 );
@@ -480,6 +483,13 @@ export const beginRepoScan = spacetimedb.reducer(
   (ctx, fields) => {
     requireWorker(ctx);
     if (ctx.db.repoScan.id.find(fields.id)) throw new SenderError(`Scan ${fields.id} already exists`);
+    // One unfinished scan per repo at a time; compares caller-supplied timestamps only. Keep in sync with the Worker's STALE_SCAN_MS.
+    const startedMs = Date.parse(fields.ingestedAt);
+    for (const other of ctx.db.repoScan.byRepo.filter(fields.repo)) {
+      if (!other.finished && startedMs - Date.parse(other.ingestedAt) < 15 * 60_000) {
+        throw new SenderError(`A scan of ${fields.repo} is already running`);
+      }
+    }
     ctx.db.repoScan.insert({
       ...fields,
       commitSha: fields.commitSha ?? undefined,
@@ -554,6 +564,7 @@ export const ingestRepoRecords = spacetimedb.reducer(
  */
 export const syncRepoIdentity = spacetimedb.reducer(
   {
+    repo: t.string(),
     id: t.string(),
     name: t.string(),
     type: t.string(),
@@ -584,6 +595,23 @@ export const syncRepoIdentity = spacetimedb.reducer(
     if (existing && existing.dataSource !== 'repository') {
       throw new SenderError(`${a.id} already exists as ${existing.dataSource} data and is not overwritten by repository sync`);
     }
+    if (existing) {
+      // A repository may not take over an identity another repository synced. Rows that predate sourceRepo
+      // belong to the repo that declared the id first (earliest first-seen scan).
+      let owner = existing.sourceRepo;
+      if (owner === '') {
+        let earliest = '';
+        for (const r of ctx.db.repoRecord.iter()) {
+          if (r.list !== 'machineIdentities' || r.key !== a.id) continue;
+          const at = ctx.db.repoScan.id.find(r.firstSeenScanId)?.ingestedAt ?? '';
+          if (owner === '' || at < earliest) {
+            owner = r.repo;
+            earliest = at;
+          }
+        }
+      }
+      if (owner !== '' && owner !== a.repo) throw new SenderError(`${a.id} is owned by another repository and is not overwritten`);
+    }
     const curated = existing?.ownerSource === 'curated';
     const row = {
       id: a.id,
@@ -602,11 +630,18 @@ export const syncRepoIdentity = spacetimedb.reducer(
       dataSource: 'repository',
       ownerSource: curated ? 'curated' : 'repository',
       repoState: 'present',
+      sourceRepo: a.repo,
     };
     if (existing) ctx.db.machineIdentity.id.update(row);
     else ctx.db.machineIdentity.insert(row);
 
+    // Grants written before ids were scoped by repo ('rp|grant|...') are replaced by the scoped ones below.
+    for (const g of [...ctx.db.permissionGrant.byIdentity.filter(a.id)]) {
+      if (g.id.startsWith('rp|grant|')) ctx.db.permissionGrant.id.delete(g.id);
+    }
     for (const g of a.grants) {
+      const owned = ctx.db.permissionGrant.id.find(g.id);
+      if (owned && owned.identityId !== a.id) throw new SenderError(`Grant ${g.id} belongs to another identity and is not overwritten`);
       const grant = { id: g.id, identityId: a.id, resource: g.resource, scope: g.scope, grantedAt: g.grantedAt, grantedBy: g.grantedBy };
       if (ctx.db.permissionGrant.id.find(g.id)) ctx.db.permissionGrant.id.update(grant);
       else ctx.db.permissionGrant.insert(grant);
@@ -648,33 +683,71 @@ export const syncRepoIdentity = spacetimedb.reducer(
  * parse) must not read absence as removal. Removal flags the record and the identity, drops the projected
  * grant or dependency row, and leaves the identity itself, its credential metadata and its status alone.
  */
-export const finishRepoScan = spacetimedb.reducer({ scanId: t.string() }, (ctx, { scanId }) => {
-  requireWorker(ctx);
-  const scan = ctx.db.repoScan.id.find(scanId);
-  if (!scan) throw new SenderError(`Unknown scan ${scanId}`);
-  if (scan.finished) return;
-  const rows = [...ctx.db.repoRecord.byRepo.filter(scan.repo)];
-  let removed = 0;
-  if (scan.status === 'complete') {
-    for (const r of rows) {
-      if (r.state !== 'present' || r.lastSeenScanId === scanId) continue;
-      ctx.db.repoRecord.id.update({ ...r, state: 'removed', removedScanId: scanId });
-      removed++;
-      if (r.list === 'machineIdentities') {
-        const identity = ctx.db.machineIdentity.id.find(r.key);
-        if (identity && identity.dataSource === 'repository') ctx.db.machineIdentity.id.update({ ...identity, repoState: 'removed' });
-      } else if (r.projectedId && r.list === 'assignments') {
-        ctx.db.permissionGrant.id.delete(r.projectedId);
+export const finishRepoScan = spacetimedb.reducer(
+  { scanId: t.string(), auditId: t.string(), securityId: t.string(), timestamp: t.string() },
+  (ctx, { scanId, auditId, securityId, timestamp }) => {
+    requireWorker(ctx);
+    const scan = ctx.db.repoScan.id.find(scanId);
+    if (!scan) throw new SenderError(`Unknown scan ${scanId}`);
+    if (scan.finished) return;
+    const rows = [...ctx.db.repoRecord.byRepo.filter(scan.repo)];
+    let removed = 0;
+    if (scan.status === 'complete') {
+      for (const r of rows) {
+        if (r.state !== 'present' || r.lastSeenScanId === scanId) continue;
+        ctx.db.repoRecord.id.update({ ...r, state: 'removed', removedScanId: scanId });
+        removed++;
+        if (r.list === 'machineIdentities') {
+          const identity = ctx.db.machineIdentity.id.find(r.key);
+          if (identity && identity.dataSource === 'repository' && (identity.sourceRepo === '' || identity.sourceRepo === scan.repo)) {
+            ctx.db.machineIdentity.id.update({ ...identity, repoState: 'removed' });
+          }
+        } else if (r.projectedId && r.list === 'assignments') {
+          // Only the identity the assignment declares may lose its grant.
+          const grant = ctx.db.permissionGrant.id.find(r.projectedId);
+          let declaredFor = '';
+          try {
+            declaredFor = String(JSON.parse(r.payload).identityId ?? '');
+          } catch {
+            declaredFor = '';
+          }
+          if (grant && grant.identityId === declaredFor) ctx.db.permissionGrant.id.delete(r.projectedId);
+        }
       }
     }
+    const persisted: Record<string, number> = {};
+    for (const r of ctx.db.repoRecord.byRepo.filter(scan.repo)) {
+      const k = `${r.list}:${r.state}`;
+      persisted[k] = (persisted[k] ?? 0) + 1;
+    }
+    ctx.db.repoScan.id.update({ ...scan, removed, finished: true, persistedJson: JSON.stringify(persisted) });
+    // Counts only, never record contents.
+    const summary = `Repository scan of ${scan.repo} (${scan.status}): ${scan.added} added, ${scan.changed} changed, ${removed} removed.`;
+    if (!ctx.db.auditEvent.id.find(auditId)) {
+      ctx.db.auditEvent.insert({
+        id: auditId,
+        timestamp,
+        action: 'repo-scan-ingested',
+        actor: 'repo-sync',
+        identityId: undefined,
+        identityName: undefined,
+        investigationId: undefined,
+        remediationId: undefined,
+        details: summary,
+      });
+    }
+    emitSecurityEvent(ctx, {
+      id: securityId,
+      timestamp,
+      kind: 'observed',
+      type: 'repo-scan-ingested',
+      source: 'repo-sync',
+      actor: 'repo-sync',
+      summary,
+      details: summary,
+    });
   }
-  const persisted: Record<string, number> = {};
-  for (const r of ctx.db.repoRecord.byRepo.filter(scan.repo)) {
-    const k = `${r.list}:${r.state}`;
-    persisted[k] = (persisted[k] ?? 0) + 1;
-  }
-  ctx.db.repoScan.id.update({ ...scan, removed, finished: true, persistedJson: JSON.stringify(persisted) });
-});
+);
 
 /**
  * Records a person's decision on who owns an identity. 'curated' pins it: scans keep updating the observed

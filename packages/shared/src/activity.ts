@@ -45,7 +45,8 @@ export type SecurityEventType =
   | 'remediation-proposed'
   | 'remediation-approved'
   | 'remediation-rejected'
-  | 'remediation-simulated';
+  | 'remediation-simulated'
+  | 'repo-scan-ingested';
 
 /**
  * Live Security Activity: facts the app actually recorded or observed. Rows are written inside
