@@ -67,10 +67,10 @@ credential-reaper/
   - `nemotron.ts` — real agent loop over NVIDIA's chat completions API. Limits (`LIMITS`): 10 turns, 24 tool calls (8 per turn), 60s per request, 180s total; the last turn forces `tool_choice: "none"`; one retry on 429/5xx/network error; errors are redacted of the API key. Never logs message content or the key.
   - `mock.ts` — scripted agent used automatically with no API key. It makes the same tool calls through the same toolbox (so it reads real SpacetimeDB data) but decides findings with fixed rules.
   - `index.ts` — `getAiProvider(env)` picks real vs. mock by `env.NVIDIA_API_KEY`; `types.ts` holds the provider contract. If the real provider fails mid-run the investigation is marked `failed` (HTTP 502) — it does **not** silently fall back to the mock.
-- `wrangler.jsonc` — Worker config. `SPACETIME_URL` / `SPACETIME_DB_NAME` are plain `vars` (not secret — just a local hostname and a database name) defaulting to a local `spacetime start` instance. `NVIDIA_API_KEY`, and optionally `SPACETIME_AUTH_TOKEN`, are read as secrets, never committed.
+- `wrangler.jsonc` — Worker config. `SPACETIME_URL` / `SPACETIME_DB_NAME` are plain `vars` (not secret — just a local hostname and a database name) defaulting to a local `spacetime start` instance. `NVIDIA_API_KEY` and `SPACETIME_AUTH_TOKEN` (required) are read as secrets, never committed.
 
 **`spacetime/module`** — the SpacetimeDB server module. Single file, `src/index.ts`:
-- Defines tables: `machineIdentity`, `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan`, `auditEvent`.
+- Defines private tables (`machineIdentity`, `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan`, `auditEvent`, `investigationEvent`, `securityEvent`, `authorizedCaller`) and one gated public view per data table (`v_machine_identity`, …) that the Worker reads.
 - Defines reducers: `startInvestigation`, `recordFinding`, `completeInvestigation`, `failInvestigation`, `proposeRemediation`, `simulateRemediation`, plus 5 seed reducers (`seedIdentity`, `seedPermission`, `seedDependency`, `seedCredential`, `seedUsageEvent`) — the only way to write the "static inventory" tables, added specifically so the Worker's `ensureSeeded()` has something to call.
 - Written against the real `spacetimedb` npm package's `schema()` / `table()` / `t` / `.reducer()` API (function-based schema definition, not decorators). **Published and connected** — see Architecture below for how to run it yourself.
 
@@ -112,7 +112,7 @@ All three runtime pieces import types from `packages/shared` so the contract sta
 4. `pnpm dev:api` — the Worker reads `SPACETIME_URL`/`SPACETIME_DB_NAME` from `wrangler.jsonc`'s `vars` (defaults already match steps 1–3) and seeds demo data into the database automatically on its first request.
 5. `pnpm dev:web` as before.
 
-**Known limitation — no auth on the local module:** every table is `{public: true}` and no reducer checks `ctx.sender`, so **any** caller with the database URL can read and write it (confirmed: all testing above used fully anonymous requests, no token). Fine for local dev; if this module is ever published somewhere network-reachable (e.g. SpacetimeDB Maincloud), it is effectively an open database until reducers add sender-identity checks or the Worker is given a private `SPACETIME_AUTH_TOKEN` secret and the module is changed to require it (the client already supports sending one if set — see `authHeader()` in `client.ts` — but nothing currently populates or requires it). Treat this the same way as the existing "CORS allows `*`" caveat: acceptable now, must be addressed before any real deployment.
+**Database access control (hardened):** every table is private (no `public: true`). Every reducer starts with `requireWorker(ctx)`, which throws `SenderError` (HTTP 530) unless `ctx.sender` is a row in the private `authorized_caller` table. No reducer writes that table: the database **owner** registers the Worker's service identity with owner-only SQL via `spacetime/scripts/provision-worker-identity.sh <db> <token-file>` (creates the identity with `POST /v1/identity`, writes its token to a 600-mode file, never prints it). The Worker sends that token as `SPACETIME_AUTH_TOKEN` and reads through the gated public views `v_<table>`, which return zero rows to anyone not in `authorized_caller`. A leaked service token can call reducers and read the views but cannot run SQL DML, read the tables, read logs, publish or delete the database; keep the owner token off the Worker. A Worker without a valid token fails closed (the seed probe in `ensureSeeded()` gets 530 → HTTP 502). `spacetime/scripts/verify-access.ts <anon|token> <db> [token-file]` checks all of this (refuses the main DB unless `ALLOW_MAIN_DB=1`). Remaining gaps: `actor`/`requestedBy` are client-supplied (no end-user auth), no Worker rate limiting, CORS `*`.
 
 **Still requires deployment or configuration for anything beyond this local setup:**
 - `wrangler secret put NVIDIA_API_KEY` (and optionally `NEMOTRON_MODEL`) to use real Nemotron instead of the mock. For local `wrangler dev`, put `NVIDIA_API_KEY=...` in `workers/api/.dev.vars` (gitignored).
@@ -149,7 +149,7 @@ import { schema, table, t } from 'spacetimedb/server';
 
 const spacetimedb = schema({
   machineIdentity: table(
-    { public: true },
+    { name: 'machine_identity' },
     { id: t.string().primaryKey(), /* ... */ }
   ),
   // ...
@@ -164,7 +164,7 @@ export const startInvestigation = spacetimedb.reducer(
 );
 ```
 
-**Current schema** (8 tables, all `public: true`): `machineIdentity`, `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan`, `auditEvent`. Nested arrays (`findings`, `steps`) are modeled with `t.object('Name', {...})` + `t.array(...)`. `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan` each have a `byIdentity` btree index on `identityId`; `auditEvent` has a `byTimestamp` btree index.
+**Current schema** (private tables, plus `authorizedCaller` and the gated `v_*` views; originally 8 tables, all `public: true`): `machineIdentity`, `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan`, `auditEvent`. Nested arrays (`findings`, `steps`) are modeled with `t.object('Name', {...})` + `t.array(...)`. `permissionGrant`, `identityDependency`, `credentialMetadata`, `usageEvent`, `investigation`, `remediationPlan` each have a `byIdentity` btree index on `identityId`; `auditEvent` has a `byTimestamp` btree index.
 
 **Current reducers** (11): `startInvestigation`, `recordFinding` (appends one finding as the agent records it), `completeInvestigation` (summary, recommendation, deterministic risk, tool trace — findings are already recorded), `failInvestigation`, `proposeRemediation`, `simulateRemediation` (the real app-logic reducers), plus `seedIdentity`, `seedPermission`, `seedDependency`, `seedCredential`, `seedUsageEvent` (bootstrap-only — the only way to write the 5 "static inventory" tables, since nothing in the app creates/edits them yet). All IDs are supplied by the caller (not generated inside the reducer) — reducers must be deterministic, so don't reach for `crypto.randomUUID()`/`Date.now()` inside one; generate IDs/timestamps in the caller (the Worker) and pass them in, as every reducer does.
 
@@ -172,8 +172,8 @@ export const startInvestigation = spacetimedb.reducer(
 - Table/column/reducer names are the camelCase TS names auto-converted to snake_case on the wire (`machineIdentity` → `machine_identity`, `riskLevel` → `risk_level`, `startInvestigation` → `start_investigation`). Confirmed via `spacetime describe --server local credential-reaper`.
 - **Reads** go through `POST /v1/database/:db/sql` with the raw SQL text as the body (not JSON, and **only one statement per request** — `;`-separated batches are rejected). The response is `[{schema: {elements: [...]}, rows: [[...]]}]`: each row is a **positional array** matching `schema.elements` order, not an object — `workers/api/src/spacetime/client.ts`'s `decodeRow()` zips them into camelCase objects. Option columns decode as a 2-tuple: `[0, value]` for present, `[1, []]` for absent.
 - **Writes** go through `POST /v1/database/:db/call/:reducer_name`. Unlike SQL reads, this endpoint accepts a plain **JSON object with camelCase keys** matching the reducer's TS param names directly (no snake_case conversion needed in the request body) — confirmed by calling reducers with both positional-array and named-object bodies; the named-object form is what this codebase uses everywhere, since it's far less brittle than relying on param declaration order. Any `Option<T>` reducer argument must be wrapped as `{some: value}` or `{none: {}}` — a bare `null`/omitted key is rejected with a 400. `client.ts`'s `encodeOption()` does this.
-- Anonymous requests (no `Authorization` header) work for both endpoints as long as the module's tables are `public: true` and its reducers don't check `ctx.sender` — true for every table/reducer here today. See §4's "Known limitation" note before relying on this anywhere but local dev.
-- The SQL endpoint only supports `SELECT` — mutations must go through reducers. (A raw `INSERT`/`UPDATE` is parsed and will even get partway through validation before failing on `Option` literal syntax, which is not documented; don't rely on it.)
+- Anonymous requests can no longer read tables or call reducers: reads must target the `v_*` views and both endpoints need `Authorization: Bearer $SPACETIME_AUTH_TOKEN` for a registered identity (§4). To inspect data directly use the owner CLI: `spacetime sql --server local credential-reaper "SELECT ..."`.
+- The SQL endpoint is read-only for non-owners — mutations must go through reducers. (A raw `INSERT`/`UPDATE` is parsed and will even get partway through validation before failing on `Option` literal syntax, which is not documented; don't rely on it.)
 
 - **Nested object fields in reducer args use snake_case** (`duration_ms`), unlike top-level args which accept camelCase. `repository.ts`'s `encodeTrace()` handles this; reads still come back through `decodeRow()` as camelCase.
 - **Schema evolution:** `investigation` gained `riskScore`, `riskLevel`, `riskFactors`, `findingBases`, `toolTrace` columns with `.default(...)`, which SpacetimeDB auto-migrates in place (existing rows kept). Because the nested `Finding` object can't gain a field without a breaking migration, each finding's `basis` lives in the parallel `findingBases` array (`findingBases[i]` ↔ `findings[i]`); `repository.ts` merges them. Rows predating this (seeded `inv-001`) default to `confirmed`.
@@ -218,7 +218,7 @@ Useful one-off commands for inspecting the live database directly, bypassing the
 
 ```bash
 spacetime describe --server local credential-reaper          # tables/reducers/types
-curl http://localhost:3000/v1/database/credential-reaper/sql --data "SELECT * FROM machine_identity"
+spacetime sql --server local credential-reaper "SELECT * FROM machine_identity"   # owner-only; tables are private
 ```
 
 Verified manually (not via an automated suite): frontend pages via browser interaction; Worker routes via `curl` against a running `wrangler dev` instance backed by a real local SpacetimeDB instance; persistence verified by killing and restarting `wrangler dev` and confirming prior state (including a started investigation and a simulated remediation plan) was still present with no re-seeding.

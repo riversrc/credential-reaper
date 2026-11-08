@@ -7,5 +7,8 @@ NVIDIA_API_KEY=
 # Optional. Defaults to nvidia/nemotron-3-super-120b-a12b.
 # NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b
 
-# Optional. Only needed once the SpacetimeDB module requires an authenticated caller.
-# SPACETIME_AUTH_TOKEN=
+# REQUIRED against a hardened SpacetimeDB module. The token of a dedicated service identity
+# registered in the module's `authorized_caller` table; create one with
+# spacetime/scripts/provision-worker-identity.sh (never use the database owner's token).
+# Without it every request fails closed with HTTP 502.
+SPACETIME_AUTH_TOKEN=

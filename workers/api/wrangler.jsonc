@@ -14,9 +14,12 @@
   // Optional var/secret:
   //   NEMOTRON_MODEL        - overrides the default
   //                           nvidia/nemotron-3-super-120b-a12b
-  //   SPACETIME_AUTH_TOKEN  - optional; only needed once the module requires
-  //                           authenticated calls (e.g. on Maincloud). Local
-  //                           dev modules are public and work without it.
+  // Required secret:
+  //   SPACETIME_AUTH_TOKEN  - token of the Worker's service identity, registered
+  //                           in the module's private `authorized_caller` table
+  //                           (spacetime/scripts/provision-worker-identity.sh).
+  //                           Without it the module returns no data and rejects
+  //                           every write, so the API answers 502.
   "vars": {
     "ENVIRONMENT": "development",
     // Requires a running SpacetimeDB instance — see CLAUDE.md "Database

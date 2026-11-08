@@ -19,7 +19,7 @@ import type {
   ToolTraceEntry,
   UsageEvent,
 } from '@credential-reaper/shared';
-import { callReducer, encodeOption, sqlInt, sqlQuery, sqlString, type SpacetimeEnv } from './client.js';
+import { REDUCER_REJECTED_STATUS, SpacetimeError, callReducer, encodeOption, sqlInt, sqlQuery, sqlString, type SpacetimeEnv } from './client.js';
 import {
   seedCredentials,
   seedDependencies,
@@ -31,28 +31,28 @@ import {
 } from './seed-data.js';
 
 export async function fetchIdentities(env: SpacetimeEnv): Promise<MachineIdentity[]> {
-  return sqlQuery<MachineIdentity>(env, 'SELECT * FROM machine_identity');
+  return sqlQuery<MachineIdentity>(env, 'SELECT * FROM v_machine_identity');
 }
 
 export async function fetchIdentity(env: SpacetimeEnv, id: string): Promise<MachineIdentity | null> {
-  const rows = await sqlQuery<MachineIdentity>(env, `SELECT * FROM machine_identity WHERE id = ${sqlString(id)}`);
+  const rows = await sqlQuery<MachineIdentity>(env, `SELECT * FROM v_machine_identity WHERE id = ${sqlString(id)}`);
   return rows[0] ?? null;
 }
 
 export function fetchPermissions(env: SpacetimeEnv, identityId: string): Promise<PermissionGrant[]> {
-  return sqlQuery<PermissionGrant>(env, `SELECT * FROM permission_grant WHERE identity_id = ${sqlString(identityId)}`);
+  return sqlQuery<PermissionGrant>(env, `SELECT * FROM v_permission_grant WHERE identity_id = ${sqlString(identityId)}`);
 }
 
 export function fetchDependencies(env: SpacetimeEnv, identityId: string): Promise<IdentityDependency[]> {
-  return sqlQuery<IdentityDependency>(env, `SELECT * FROM identity_dependency WHERE identity_id = ${sqlString(identityId)}`);
+  return sqlQuery<IdentityDependency>(env, `SELECT * FROM v_identity_dependency WHERE identity_id = ${sqlString(identityId)}`);
 }
 
 export function fetchCredentials(env: SpacetimeEnv, identityId: string): Promise<CredentialMetadata[]> {
-  return sqlQuery<CredentialMetadata>(env, `SELECT * FROM credential_metadata WHERE identity_id = ${sqlString(identityId)}`);
+  return sqlQuery<CredentialMetadata>(env, `SELECT * FROM v_credential_metadata WHERE identity_id = ${sqlString(identityId)}`);
 }
 
 export function fetchUsageEvents(env: SpacetimeEnv, identityId: string): Promise<UsageEvent[]> {
-  return sqlQuery<UsageEvent>(env, `SELECT * FROM usage_event WHERE identity_id = ${sqlString(identityId)}`);
+  return sqlQuery<UsageEvent>(env, `SELECT * FROM v_usage_event WHERE identity_id = ${sqlString(identityId)}`);
 }
 
 export async function fetchIdentityDetail(env: SpacetimeEnv, id: string) {
@@ -92,12 +92,12 @@ function toInvestigation(row: InvestigationRow): Investigation {
 }
 
 export async function fetchInvestigations(env: SpacetimeEnv): Promise<Investigation[]> {
-  const rows = await sqlQuery<InvestigationRow>(env, 'SELECT * FROM investigation');
+  const rows = await sqlQuery<InvestigationRow>(env, 'SELECT * FROM v_investigation');
   return rows.map(toInvestigation).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 export async function fetchInvestigation(env: SpacetimeEnv, id: string): Promise<Investigation | null> {
-  const rows = await sqlQuery<InvestigationRow>(env, `SELECT * FROM investigation WHERE id = ${sqlString(id)}`);
+  const rows = await sqlQuery<InvestigationRow>(env, `SELECT * FROM v_investigation WHERE id = ${sqlString(id)}`);
   return rows[0] ? toInvestigation(rows[0]) : null;
 }
 
@@ -159,16 +159,16 @@ export async function proposeRemediationRow(
 }
 
 export async function fetchAuditEvents(env: SpacetimeEnv): Promise<AuditEvent[]> {
-  const rows = await sqlQuery<AuditEvent>(env, 'SELECT * FROM audit_event');
+  const rows = await sqlQuery<AuditEvent>(env, 'SELECT * FROM v_audit_event');
   return rows.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 export async function fetchRemediationPlans(env: SpacetimeEnv): Promise<RemediationPlan[]> {
-  return sqlQuery<RemediationPlan>(env, 'SELECT * FROM remediation_plan');
+  return sqlQuery<RemediationPlan>(env, 'SELECT * FROM v_remediation_plan');
 }
 
 export async function fetchRemediationPlan(env: SpacetimeEnv, id: string): Promise<RemediationPlan | null> {
-  const rows = await sqlQuery<RemediationPlan>(env, `SELECT * FROM remediation_plan WHERE id = ${sqlString(id)}`);
+  const rows = await sqlQuery<RemediationPlan>(env, `SELECT * FROM v_remediation_plan WHERE id = ${sqlString(id)}`);
   return rows[0] ?? null;
 }
 
@@ -182,11 +182,11 @@ export async function decideRemediationRow(env: SpacetimeEnv, decision: 'approve
 
 /** Investigations for this identity still marked running (the caller decides which are stale). */
 export async function fetchRunningInvestigations(env: SpacetimeEnv, identityId: string): Promise<Pick<Investigation, 'id' | 'startedAt'>[]> {
-  return sqlQuery(env, `SELECT id, started_at FROM investigation WHERE identity_id = ${sqlString(identityId)} AND status = 'running'`);
+  return sqlQuery(env, `SELECT id, started_at FROM v_investigation WHERE identity_id = ${sqlString(identityId)} AND status = 'running'`);
 }
 
 export async function investigationExists(env: SpacetimeEnv, id: string): Promise<boolean> {
-  return (await sqlQuery(env, `SELECT id FROM investigation WHERE id = ${sqlString(id)}`)).length > 0;
+  return (await sqlQuery(env, `SELECT id FROM v_investigation WHERE id = ${sqlString(id)}`)).length > 0;
 }
 
 export async function recordInvestigationEventRow(
@@ -201,25 +201,25 @@ export const MAX_EVENT_ROWS = 500;
 /** Events with seq > after, ascending by seq. SpacetimeDB SQL has no ORDER BY, so sorting happens here. */
 export async function fetchInvestigationEvents(env: SpacetimeEnv, investigationId: string | null, after: number, limit = MAX_EVENT_ROWS): Promise<InvestigationEvent[]> {
   const scope = investigationId === null ? '' : ` AND investigation_id = ${sqlString(investigationId)}`;
-  const rows = await sqlQuery<InvestigationEvent>(env, `SELECT * FROM investigation_event WHERE seq > ${sqlInt(after)}${scope}`);
+  const rows = await sqlQuery<InvestigationEvent>(env, `SELECT * FROM v_investigation_event WHERE seq > ${sqlInt(after)}${scope}`);
   return rows.sort((a, b) => a.seq - b.seq).slice(0, limit);
 }
 
 /** Security events with seq > after, ascending, optionally limited to one investigation (used by the SSE tail). */
 export async function fetchSecurityEventsAfter(env: SpacetimeEnv, investigationId: string | null, after: number, limit = MAX_EVENT_ROWS): Promise<SecurityEvent[]> {
   const scope = investigationId === null ? '' : ` AND investigation_id = ${sqlString(investigationId)}`;
-  const rows = await sqlQuery<SecurityEvent>(env, `SELECT * FROM security_event WHERE seq > ${sqlInt(after)}${scope}`);
+  const rows = await sqlQuery<SecurityEvent>(env, `SELECT * FROM v_security_event WHERE seq > ${sqlInt(after)}${scope}`);
   return rows.sort((a, b) => a.seq - b.seq).slice(0, limit);
 }
 
 /** Newest first. Full scan + sort in the Worker (no ORDER BY in SpacetimeDB SQL); fine at demo scale. */
 export async function fetchSecurityEvents(env: SpacetimeEnv, limit: number): Promise<SecurityEvent[]> {
-  const rows = await sqlQuery<SecurityEvent>(env, 'SELECT * FROM security_event');
+  const rows = await sqlQuery<SecurityEvent>(env, 'SELECT * FROM v_security_event');
   return rows.sort((a, b) => b.seq - a.seq).slice(0, limit);
 }
 
 export async function fetchMaxSeq(env: SpacetimeEnv, table: 'investigation_event' | 'security_event'): Promise<number> {
-  const rows = await sqlQuery<{ seq: number }>(env, `SELECT seq FROM ${table}`);
+  const rows = await sqlQuery<{ seq: number }>(env, `SELECT seq FROM v_${table}`);
   return rows.reduce((max, r) => Math.max(max, r.seq), 0);
 }
 
@@ -234,14 +234,27 @@ let seeded = false;
 export async function ensureSeeded(env: SpacetimeEnv): Promise<void> {
   if (seeded) return;
 
-  const existing = await sqlQuery(env, 'SELECT id FROM machine_identity LIMIT 1');
+  const existing = await sqlQuery(env, 'SELECT id FROM v_machine_identity LIMIT 1');
   if (existing.length > 0) {
     seeded = true;
     return;
   }
 
-  for (const identity of seedIdentities) {
-    await callReducer(env, 'seed_identity', { ...identity, lastUsedAt: encodeOption(identity.lastUsedAt) });
+  // An unregistered Worker identity sees empty views, so "empty" is indistinguishable from "unseeded";
+  // the first write is the probe that tells them apart, and it must fail closed with a clear cause.
+  try {
+    for (const identity of seedIdentities) {
+      await callReducer(env, 'seed_identity', { ...identity, lastUsedAt: encodeOption(identity.lastUsedAt) });
+    }
+  } catch (e) {
+    if (e instanceof SpacetimeError && e.status === REDUCER_REJECTED_STATUS) {
+      throw new SpacetimeError(
+        'SpacetimeDB rejected the Worker identity: set SPACETIME_AUTH_TOKEN to a token whose identity is registered in authorized_caller.',
+        e.status,
+        e.detail
+      );
+    }
+    throw e;
   }
   for (const permission of seedPermissions) {
     await callReducer(env, 'seed_permission', permission);

@@ -7,6 +7,9 @@
 #     so every investigation uses the scripted mock provider and reports source "mock"
 # It never reads workers/api/.dev.vars.
 #
+# Optional env: QA_DB (default credential-reaper-qa), QA_TOKEN_FILE (file holding a SPACETIME_AUTH_TOKEN
+# for a registered service identity; its content goes into the generated .dev.vars, never into logs).
+#
 #   workers/api/scripts/qa-worker.sh start   # idempotent: refuses if 8788 is already taken
 #   workers/api/scripts/qa-worker.sh stop    # kills only the process group this script started
 #   workers/api/scripts/qa-worker.sh status
@@ -14,13 +17,18 @@ set -euo pipefail
 
 API_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 QA_DIR=/tmp/qa-worker
-PORT=8788
+PORT=${QA_PORT:-8788}
+DB_NAME=${QA_DB:-credential-reaper-qa}
+TOKEN_FILE=${QA_TOKEN_FILE:-}
 PIDFILE="$QA_DIR/pid"
 LOG="$QA_DIR/wrangler.log"
 
 write_config() {
   mkdir -p "$QA_DIR"
-  : > "$QA_DIR/.dev.vars"
+  ( umask 077; : > "$QA_DIR/.dev.vars" )
+  if [ -n "$TOKEN_FILE" ]; then
+    ( umask 077; printf 'SPACETIME_AUTH_TOKEN=%s\n' "$(cat "$TOKEN_FILE")" > "$QA_DIR/.dev.vars" )
+  fi
   cat > "$QA_DIR/wrangler.jsonc" <<JSON
 {
   "name": "credential-reaper-api-qa",
@@ -30,7 +38,7 @@ write_config() {
   "vars": {
     "ENVIRONMENT": "qa",
     "SPACETIME_URL": "http://localhost:3000",
-    "SPACETIME_DB_NAME": "credential-reaper-qa"
+    "SPACETIME_DB_NAME": "$DB_NAME"
   }
 }
 JSON

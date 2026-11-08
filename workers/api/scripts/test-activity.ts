@@ -3,7 +3,8 @@
 // credential-reaper-qa database. Refuses any other target. Never starts an investigation anywhere
 // but the QA Worker, and aborts unless that Worker reports source "mock".
 //
-//   workers/api/scripts/qa-worker.sh start && cd workers/api && npx tsx scripts/test-activity.ts
+//   QA_TOKEN_FILE=<token-file> workers/api/scripts/qa-worker.sh start && cd workers/api && QA_TOKEN_FILE=<token-file> npx tsx scripts/test-activity.ts
+import { readFileSync } from 'node:fs';
 import type { AuditEvent, Investigation, InvestigationEvent, RemediationPlan, SecurityEvent } from '@credential-reaper/shared';
 
 const BASE = process.env.QA_BASE ?? 'http://localhost:8788';
@@ -209,7 +210,7 @@ if (planA && planB) {
 
 // ---- 4. error paths do not leak internals (imports the Worker directly, with deliberately broken envs)
 const worker = (await import('../src/index.js')).default;
-const goodEnv = { SPACETIME_URL: 'http://localhost:3000', SPACETIME_DB_NAME: 'credential-reaper-qa' } as any;
+const goodEnv = { SPACETIME_URL: 'http://localhost:3000', SPACETIME_DB_NAME: process.env.QA_DB ?? 'credential-reaper-qa', SPACETIME_AUTH_TOKEN: process.env.QA_TOKEN_FILE ? readFileSync(process.env.QA_TOKEN_FILE, 'utf8').trim() : undefined } as any;
 await worker.fetch(new Request('http://x/api/identities'), goodEnv, {} as any); // marks the Worker as seeded
 const origErr = console.error;
 console.error = () => {};

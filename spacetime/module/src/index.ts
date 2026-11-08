@@ -1,9 +1,13 @@
 // SpacetimeDB 2.x server module (TypeScript) for Credential Reaper.
 //
-// This defines the persistent tables and reducers that back the machine
-// identity inventory, investigations, remediation plans, and audit trail.
-// The Cloudflare Worker (workers/api) reads it over SpacetimeDB's HTTP API and
-// writes only through the reducers below.
+// Persistent tables and reducers behind the machine identity inventory,
+// investigations, remediation plans, and audit trail.
+//
+// Access model: every table is private. Only identities registered in the
+// `authorized_caller` table (the Cloudflare Worker's service identity) may call
+// a reducer or read data, and reads go through the gated `v_*` views at the end
+// of this file. `authorized_caller` has no reducer: the database owner edits it
+// with owner-only SQL (see spacetime/scripts/provision-worker-identity.sh).
 //
 // Timestamps are stored as ISO 8601 strings (not SpacetimeDB's native
 // `Timestamp` type) so row shapes match packages/shared exactly and can be
@@ -36,174 +40,195 @@ const remediationStep = t.object('RemediationStep', {
   automatable: t.bool(),
 });
 
+const machineIdentity = table(
+  { name: 'machine_identity' },
+  {
+    id: t.string().primaryKey(),
+    name: t.string(),
+    type: t.string(),
+    owner: t.string(),
+    team: t.string(),
+    environment: t.string(),
+    status: t.string(),
+    riskLevel: t.string(),
+    riskScore: t.u32(),
+    createdAt: t.string(),
+    lastUsedAt: t.option(t.string()),
+    tags: t.array(t.string()),
+    description: t.string(),
+  }
+);
+
+const permissionGrant = table(
+  { name: 'permission_grant', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    resource: t.string(),
+    scope: t.string(),
+    grantedAt: t.string(),
+    grantedBy: t.string(),
+  }
+);
+
+const identityDependency = table(
+  { name: 'identity_dependency', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    name: t.string(),
+    kind: t.string(),
+    relationship: t.string(),
+  }
+);
+
+const credentialMetadata = table(
+  { name: 'credential_metadata', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    kind: t.string(),
+    storageLocation: t.string(),
+    maskedPreview: t.string(),
+    createdAt: t.string(),
+    lastRotatedAt: t.option(t.string()),
+    expiresAt: t.option(t.string()),
+  }
+);
+
+const usageEvent = table(
+  { name: 'usage_event', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    timestamp: t.string(),
+    action: t.string(),
+    source: t.string(),
+    result: t.string(),
+  }
+);
+
+const investigation = table(
+  { name: 'investigation', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    identityName: t.string(),
+    status: t.string(),
+    startedAt: t.string(),
+    completedAt: t.option(t.string()),
+    requestedBy: t.string(),
+    findings: t.array(finding),
+    aiSummary: t.option(t.string()),
+    recommendedAction: t.option(t.string()),
+    source: t.string(),
+    // Columns below were added after the first publish. They carry defaults so
+    // SpacetimeDB can auto-migrate existing rows. `findingBases[i]` is the
+    // basis ("confirmed" | "inferred" | "unknown") of `findings[i]`: the
+    // nested Finding type can't gain a field without a breaking migration.
+    riskScore: t.u32().default(0),
+    riskLevel: t.string().default(''),
+    riskFactors: t.array(t.string()).default([]),
+    findingBases: t.array(t.string()).default([]),
+    toolTrace: t.array(toolTraceEntry).default([]),
+  }
+);
+
+const remediationPlan = table(
+  { name: 'remediation_plan', indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
+  {
+    id: t.string().primaryKey(),
+    identityId: t.string(),
+    identityName: t.string(),
+    investigationId: t.option(t.string()),
+    action: t.string(),
+    justification: t.string(),
+    steps: t.array(remediationStep),
+    status: t.string(),
+    createdAt: t.string(),
+    simulatedAt: t.option(t.string()),
+    // Added after the first publish with defaults so existing rows auto-migrate.
+    decidedAt: t.option(t.string()).default(undefined),
+    decidedBy: t.option(t.string()).default(undefined),
+  }
+);
+
+const auditEvent = table(
+  { name: 'audit_event', indexes: [{ accessor: 'byTimestamp', algorithm: 'btree', columns: ['timestamp'] }] },
+  {
+    id: t.string().primaryKey(),
+    timestamp: t.string(),
+    action: t.string(),
+    actor: t.string(),
+    identityId: t.option(t.string()),
+    identityName: t.option(t.string()),
+    investigationId: t.option(t.string()),
+    remediationId: t.option(t.string()),
+    details: t.string(),
+  }
+);
+
+// Progress events for one running investigation (what the agent is doing right now).
+const investigationEvent = table(
+  { name: 'investigation_event', indexes: [{ accessor: 'byInvestigation', algorithm: 'btree', columns: ['investigationId'] }] },
+  {
+    seq: t.u64().primaryKey().autoInc(),
+    investigationId: t.string(),
+    timestamp: t.string(),
+    eventType: t.string(),
+    stage: t.string(),
+    toolName: t.option(t.string()),
+    status: t.string(),
+    message: t.string(),
+    details: t.string(),
+  }
+);
+
+// Live Security Activity feed. Rows are inserted inside the reducer that performs the state
+// change they describe, so an event can neither be lost nor invented.
+const securityEvent = table(
+  { name: 'security_event' },
+  {
+    seq: t.u64().primaryKey().autoInc(),
+    id: t.string().unique(),
+    timestamp: t.string(),
+    kind: t.string(),
+    type: t.string(),
+    severity: t.option(t.string()),
+    identityId: t.option(t.string()),
+    identityName: t.option(t.string()),
+    investigationId: t.option(t.string()),
+    remediationId: t.option(t.string()),
+    source: t.string(),
+    actor: t.string(),
+    summary: t.string(),
+    details: t.string(),
+  }
+);
+
+// Identities allowed to call reducers and read data. Private, and no reducer writes it: only the
+// database owner can add or remove rows (owner-only SQL DML via the CLI), see spacetime/scripts.
+const authorizedCaller = table(
+  { name: 'authorized_caller' },
+  {
+    identity: t.identity().primaryKey(),
+    label: t.string(),
+    addedAt: t.string(),
+  }
+);
+
 const spacetimedb = schema({
-  machineIdentity: table(
-    { public: true },
-    {
-      id: t.string().primaryKey(),
-      name: t.string(),
-      type: t.string(),
-      owner: t.string(),
-      team: t.string(),
-      environment: t.string(),
-      status: t.string(),
-      riskLevel: t.string(),
-      riskScore: t.u32(),
-      createdAt: t.string(),
-      lastUsedAt: t.option(t.string()),
-      tags: t.array(t.string()),
-      description: t.string(),
-    }
-  ),
-
-  permissionGrant: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      resource: t.string(),
-      scope: t.string(),
-      grantedAt: t.string(),
-      grantedBy: t.string(),
-    }
-  ),
-
-  identityDependency: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      name: t.string(),
-      kind: t.string(),
-      relationship: t.string(),
-    }
-  ),
-
-  credentialMetadata: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      kind: t.string(),
-      storageLocation: t.string(),
-      maskedPreview: t.string(),
-      createdAt: t.string(),
-      lastRotatedAt: t.option(t.string()),
-      expiresAt: t.option(t.string()),
-    }
-  ),
-
-  usageEvent: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      timestamp: t.string(),
-      action: t.string(),
-      source: t.string(),
-      result: t.string(),
-    }
-  ),
-
-  investigation: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      identityName: t.string(),
-      status: t.string(),
-      startedAt: t.string(),
-      completedAt: t.option(t.string()),
-      requestedBy: t.string(),
-      findings: t.array(finding),
-      aiSummary: t.option(t.string()),
-      recommendedAction: t.option(t.string()),
-      source: t.string(),
-      // Columns below were added after the first publish. They carry defaults so
-      // SpacetimeDB can auto-migrate existing rows. `findingBases[i]` is the
-      // basis ("confirmed" | "inferred" | "unknown") of `findings[i]`: the
-      // nested Finding type can't gain a field without a breaking migration.
-      riskScore: t.u32().default(0),
-      riskLevel: t.string().default(''),
-      riskFactors: t.array(t.string()).default([]),
-      findingBases: t.array(t.string()).default([]),
-      toolTrace: t.array(toolTraceEntry).default([]),
-    }
-  ),
-
-  remediationPlan: table(
-    { public: true, indexes: [{ accessor: 'byIdentity', algorithm: 'btree', columns: ['identityId'] }] },
-    {
-      id: t.string().primaryKey(),
-      identityId: t.string(),
-      identityName: t.string(),
-      investigationId: t.option(t.string()),
-      action: t.string(),
-      justification: t.string(),
-      steps: t.array(remediationStep),
-      status: t.string(),
-      createdAt: t.string(),
-      simulatedAt: t.option(t.string()),
-      // Added after the first publish with defaults so existing rows auto-migrate.
-      decidedAt: t.option(t.string()).default(undefined),
-      decidedBy: t.option(t.string()).default(undefined),
-    }
-  ),
-
-  auditEvent: table(
-    { public: true, indexes: [{ accessor: 'byTimestamp', algorithm: 'btree', columns: ['timestamp'] }] },
-    {
-      id: t.string().primaryKey(),
-      timestamp: t.string(),
-      action: t.string(),
-      actor: t.string(),
-      identityId: t.option(t.string()),
-      identityName: t.option(t.string()),
-      investigationId: t.option(t.string()),
-      remediationId: t.option(t.string()),
-      details: t.string(),
-    }
-  ),
-
-  // Progress events for one running investigation (what the agent is doing right now).
-  // Same caveat as every table here: public and no reducer checks ctx.sender (see CLAUDE.md
-  // section 4 "no auth on the local module"), so any caller can read or append rows.
-  investigationEvent: table(
-    { public: true, indexes: [{ accessor: 'byInvestigation', algorithm: 'btree', columns: ['investigationId'] }] },
-    {
-      seq: t.u64().primaryKey().autoInc(),
-      investigationId: t.string(),
-      timestamp: t.string(),
-      eventType: t.string(),
-      stage: t.string(),
-      toolName: t.option(t.string()),
-      status: t.string(),
-      message: t.string(),
-      details: t.string(),
-    }
-  ),
-
-  // Live Security Activity feed. Rows are inserted inside the reducer that performs the state
-  // change they describe, so an event can neither be lost nor invented. Same no-auth caveat as above.
-  securityEvent: table(
-    { public: true },
-    {
-      seq: t.u64().primaryKey().autoInc(),
-      id: t.string().unique(),
-      timestamp: t.string(),
-      kind: t.string(),
-      type: t.string(),
-      severity: t.option(t.string()),
-      identityId: t.option(t.string()),
-      identityName: t.option(t.string()),
-      investigationId: t.option(t.string()),
-      remediationId: t.option(t.string()),
-      source: t.string(),
-      actor: t.string(),
-      summary: t.string(),
-      details: t.string(),
-    }
-  ),
+  machineIdentity,
+  permissionGrant,
+  identityDependency,
+  credentialMetadata,
+  usageEvent,
+  investigation,
+  remediationPlan,
+  auditEvent,
+  investigationEvent,
+  securityEvent,
+  authorizedCaller,
 });
 
 export default spacetimedb;
@@ -251,6 +276,16 @@ function emitSecurityEvent(ctx: { db: any }, e: SecurityEventInput): void {
   });
 }
 
+/** True only for identities the database owner registered in `authorizedCaller` (the Worker's service identity). */
+function isAuthorized(ctx: { sender: unknown; db: any }): boolean {
+  return ctx.db.authorizedCaller.identity.find(ctx.sender) != null;
+}
+
+/** Every reducer starts with this. The message is deliberately generic so callers learn nothing about why. */
+function requireWorker(ctx: { sender: unknown; db: any }): void {
+  if (!isAuthorized(ctx)) throw new SenderError('Not authorized.');
+}
+
 // Seed reducers: the only way to write rows into the five "static inventory"
 // tables, since nothing in the app creates/edits machine identities today.
 // The Worker calls these once (if the tables are empty) to bootstrap data
@@ -273,6 +308,7 @@ export const seedIdentity = spacetimedb.reducer(
     description: t.string(),
   },
   (ctx, fields) => {
+    requireWorker(ctx);
     ctx.db.machineIdentity.insert({ ...fields, lastUsedAt: fields.lastUsedAt ?? undefined });
   }
 );
@@ -287,6 +323,7 @@ export const seedPermission = spacetimedb.reducer(
     grantedBy: t.string(),
   },
   (ctx, fields) => {
+    requireWorker(ctx);
     ctx.db.permissionGrant.insert(fields);
   }
 );
@@ -300,6 +337,7 @@ export const seedDependency = spacetimedb.reducer(
     relationship: t.string(),
   },
   (ctx, fields) => {
+    requireWorker(ctx);
     ctx.db.identityDependency.insert(fields);
   }
 );
@@ -316,6 +354,7 @@ export const seedCredential = spacetimedb.reducer(
     expiresAt: t.option(t.string()),
   },
   (ctx, fields) => {
+    requireWorker(ctx);
     ctx.db.credentialMetadata.insert({
       ...fields,
       lastRotatedAt: fields.lastRotatedAt ?? undefined,
@@ -334,6 +373,7 @@ export const seedUsageEvent = spacetimedb.reducer(
     result: t.string(),
   },
   (ctx, fields) => {
+    requireWorker(ctx);
     ctx.db.usageEvent.insert(fields);
   }
 );
@@ -349,6 +389,7 @@ export const startInvestigation = spacetimedb.reducer(
     source: t.string(),
   },
   (ctx, { id, identityId, identityName, requestedBy, startedAt, source }) => {
+    requireWorker(ctx);
     // Atomic version of the Worker's cost-abuse guard (parallel requests can't slip past a check-then-insert).
     // Compares the caller-supplied timestamps only, so it stays deterministic. Keep in sync with the Worker's 200s.
     const startedMs = Date.parse(startedAt);
@@ -415,6 +456,7 @@ export const recordFinding = spacetimedb.reducer(
     recordedAt: t.string(),
   },
   (ctx, { investigationId, id, category, severity, basis, description, evidence, recordedAt }) => {
+    requireWorker(ctx);
     const existing = ctx.db.investigation.id.find(investigationId);
     if (!existing || existing.status !== 'running') return;
 
@@ -454,6 +496,7 @@ export const completeInvestigation = spacetimedb.reducer(
     actor: t.string(),
   },
   (ctx, { investigationId, completedAt, aiSummary, recommendedAction, riskScore, riskLevel, riskFactors, toolTrace, actor }) => {
+    requireWorker(ctx);
     const existing = ctx.db.investigation.id.find(investigationId);
     if (!existing) return;
 
@@ -512,6 +555,7 @@ export const failInvestigation = spacetimedb.reducer(
     actor: t.string(),
   },
   (ctx, { investigationId, completedAt, reason, toolTrace, actor }) => {
+    requireWorker(ctx);
     const existing = ctx.db.investigation.id.find(investigationId);
     if (!existing) return;
 
@@ -559,6 +603,7 @@ export const proposeRemediation = spacetimedb.reducer(
     actor: t.string(),
   },
   (ctx, { id, identityId, identityName, investigationId, action, justification, steps, createdAt, actor }) => {
+    requireWorker(ctx);
     ctx.db.remediationPlan.insert({
       id,
       identityId,
@@ -619,6 +664,7 @@ function requirePlan(ctx: { db: any }, planId: string, expected: string, verb: s
 export const approveRemediation = spacetimedb.reducer(
   { planId: t.string(), decidedAt: t.string(), actor: t.string() },
   (ctx, { planId, decidedAt, actor }) => {
+    requireWorker(ctx);
     const plan = requirePlan(ctx, planId, 'proposed', 'approve');
     ctx.db.remediationPlan.id.update({ ...plan, status: 'approved', decidedAt, decidedBy: actor });
     ctx.db.auditEvent.insert({
@@ -653,6 +699,7 @@ export const approveRemediation = spacetimedb.reducer(
 export const rejectRemediation = spacetimedb.reducer(
   { planId: t.string(), decidedAt: t.string(), actor: t.string() },
   (ctx, { planId, decidedAt, actor }) => {
+    requireWorker(ctx);
     const plan = requirePlan(ctx, planId, 'proposed', 'reject');
     ctx.db.remediationPlan.id.update({ ...plan, status: 'rejected', decidedAt, decidedBy: actor });
     ctx.db.auditEvent.insert({
@@ -687,6 +734,7 @@ export const rejectRemediation = spacetimedb.reducer(
 export const simulateRemediation = spacetimedb.reducer(
   { planId: t.string(), simulatedAt: t.string(), actor: t.string() },
   (ctx, { planId, simulatedAt, actor }) => {
+    requireWorker(ctx);
     const plan = requirePlan(ctx, planId, 'approved', 'simulate');
 
     ctx.db.remediationPlan.id.update({ ...plan, status: 'simulated', simulatedAt });
@@ -732,7 +780,73 @@ export const recordInvestigationEvent = spacetimedb.reducer(
     details: t.string(),
   },
   (ctx, { investigationId, timestamp, eventType, stage, toolName, status, message, details }) => {
+    requireWorker(ctx);
     if (!ctx.db.investigation.id.find(investigationId)) return;
     ctx.db.investigationEvent.insert({ seq: 0n, investigationId, timestamp, eventType, stage, toolName, status, message, details });
   }
+);
+
+// Read access. Every table above is private, so a client cannot query it. The Worker reads through
+// these views instead: they are queryable by anyone, but return rows only when the caller's identity
+// is registered in `authorizedCaller`; an anonymous or unregistered caller gets zero rows. There is
+// one per table, named `v_<table>`, and the Worker's SQL reads from them.
+
+export const vMachineIdentity = spacetimedb.view(
+  { name: 'v_machine_identity', public: true },
+  t.array(machineIdentity.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.machineIdentity.iter()) : [])
+);
+
+export const vPermissionGrant = spacetimedb.view(
+  { name: 'v_permission_grant', public: true },
+  t.array(permissionGrant.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.permissionGrant.iter()) : [])
+);
+
+export const vIdentityDependency = spacetimedb.view(
+  { name: 'v_identity_dependency', public: true },
+  t.array(identityDependency.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.identityDependency.iter()) : [])
+);
+
+export const vCredentialMetadata = spacetimedb.view(
+  { name: 'v_credential_metadata', public: true },
+  t.array(credentialMetadata.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.credentialMetadata.iter()) : [])
+);
+
+export const vUsageEvent = spacetimedb.view(
+  { name: 'v_usage_event', public: true },
+  t.array(usageEvent.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.usageEvent.iter()) : [])
+);
+
+export const vInvestigation = spacetimedb.view(
+  { name: 'v_investigation', public: true },
+  t.array(investigation.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.investigation.iter()) : [])
+);
+
+export const vRemediationPlan = spacetimedb.view(
+  { name: 'v_remediation_plan', public: true },
+  t.array(remediationPlan.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.remediationPlan.iter()) : [])
+);
+
+export const vAuditEvent = spacetimedb.view(
+  { name: 'v_audit_event', public: true },
+  t.array(auditEvent.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.auditEvent.iter()) : [])
+);
+
+export const vInvestigationEvent = spacetimedb.view(
+  { name: 'v_investigation_event', public: true },
+  t.array(investigationEvent.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.investigationEvent.iter()) : [])
+);
+
+export const vSecurityEvent = spacetimedb.view(
+  { name: 'v_security_event', public: true },
+  t.array(securityEvent.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.securityEvent.iter()) : [])
 );

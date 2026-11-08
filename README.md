@@ -118,15 +118,24 @@ that back the Worker API. Useful commands once a local instance is running:
 
 ```bash
 spacetime describe --server local credential-reaper
-curl http://localhost:3000/v1/database/credential-reaper/sql --data "SELECT * FROM machine_identity"
+spacetime sql --server local credential-reaper "SELECT * FROM machine_identity"   # owner only; tables are private
 ```
 
-**Local dev note:** the published module has no authentication — every table
-is public and no reducer checks the caller's identity, so anyone with the
-database URL can read and write it. That's fine for local dev but must be
-addressed (reducer-level sender checks, and/or a `SPACETIME_AUTH_TOKEN`
-secret the Worker already knows how to send) before publishing anywhere
-network-reachable.
+**Database access model.** Every table is private and every reducer begins with
+a check that the caller is registered in the private `authorized_caller` table.
+The Worker reads through gated `v_*` views and writes through reducers using a
+dedicated service identity; an anonymous caller sees no rows and every reducer
+call is rejected. After publishing the module, provision that identity once
+(run as the database owner), then give the token to the Worker:
+
+```bash
+spacetime/scripts/provision-worker-identity.sh credential-reaper ~/.credential-reaper-worker-token
+# put the file's content in workers/api/.dev.vars as SPACETIME_AUTH_TOKEN=...
+node spacetime/scripts/verify-access.ts anon credential-reaper      # ALLOW_MAIN_DB=1 required for the main DB
+```
+
+Without a token the Worker fails closed (HTTP 502). Application-level user
+authentication and Worker rate limiting do not exist yet.
 
 ## Security notes
 
