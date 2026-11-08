@@ -1,8 +1,6 @@
-import { Link } from 'react-router-dom';
 import type { AuditEvent, Investigation, MachineIdentity, RemediationPlan, RiskLevel } from '@credential-reaper/shared';
 import { Panel } from '../Panel';
 import { StateMessage } from '../StateMessage';
-import { ArrowRight } from '../Glyph';
 import { DemoChip } from '../DemoChip';
 import { ACTION_TITLE, buildHistory, formatStamp } from '../../lib/history';
 import type { IdentityDetail } from '../../lib/networkGraph';
@@ -41,7 +39,7 @@ export function HygienePanel({ identities, investigations, plans }: HygieneProps
       <div className="hygiene">
         <span className="lcd hygiene-score">{score ?? '—'}</span>
         <p className="muted-sm">
-          Derived: 100 minus the mean backend risk score across {identities.length} identities. Not a compliance rating.
+          100 minus mean risk across {identities.length} identities. Not a compliance rating.
         </p>
       </div>
       <ul className="stat-chips">
@@ -49,31 +47,6 @@ export function HygienePanel({ identities, investigations, plans }: HygieneProps
         {chip('Investigated', investigated)}
         {chip('Simulated', simulated)}
       </ul>
-    </Panel>
-  );
-}
-
-export function SuggestedPanel({ identities, plans }: { identities: MachineIdentity[]; plans: RemediationPlan[] | null }) {
-  const open = plans?.filter((p) => p.status === 'proposed' || p.status === 'approved') ?? [];
-  const risk = new Map(identities.map((i) => [i.id, i.riskLevel]));
-  return (
-    <Panel title="Suggested improvements" bracketed>
-      {plans === null && <StateMessage kind="error">remediation plans could not be loaded.</StateMessage>}
-      {plans !== null && open.length === 0 && <StateMessage kind="empty">no open remediation plans.</StateMessage>}
-      <ul className="suggest">
-        {open.slice(0, 5).map((p) => (
-          <li key={p.id}>
-            <span className="suggest-name">
-              {p.identityName} <span className="muted">· {p.action}</span>
-            </span>
-            {risk.get(p.identityId) && <Pips level={risk.get(p.identityId)!} />}
-          </li>
-        ))}
-      </ul>
-      {open.length > 5 && <p className="muted">+{open.length - 5} more open plans</p>}
-      <Link to="/remediation" className="btn btn-secondary btn-sm suggest-cta">
-        Review in remediation <ArrowRight />
-      </Link>
     </Panel>
   );
 }

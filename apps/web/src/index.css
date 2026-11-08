@@ -811,6 +811,7 @@ details > summary {
   background: var(--map-bg);
   border: 1px solid var(--border-strong);
   padding: 0.6rem 0.8rem;
+  margin-bottom: 1rem;
 }
 
 .cmdbar .prompt {
@@ -822,21 +823,6 @@ details > summary {
   border-color: var(--border);
   min-width: 0;
   max-width: 100%;
-}
-
-.inv-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.inv-head h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
 }
 
 .trace {
@@ -860,6 +846,292 @@ details > summary {
 .trace .st-rejected,
 .trace .st-error {
   color: var(--critical);
+}
+
+.inv-filter {
+  margin-bottom: 0.75rem;
+}
+
+.inv-list {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.inv + .inv {
+  border-top: 1px solid var(--border);
+}
+
+/* Disclosure chevron: drawn, not a glyph. Rotates 150ms; nothing else animates on toggle. */
+.disc-sum {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.disc-sum::-webkit-details-marker {
+  display: none;
+}
+
+.disc-sum::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--text-dim);
+  border-bottom: 2px solid var(--text-dim);
+  transform: translateY(-1px) rotate(-45deg);
+  transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out);
+}
+
+details[open] > .disc-sum::before {
+  transform: translateY(-3px) rotate(45deg);
+  border-color: var(--accent);
+}
+
+.inv-sum {
+  display: grid;
+  grid-template-columns: 6px minmax(8rem, 1fr) 6.5rem 8.5rem 7rem 5rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  transition: background-color 150ms var(--ease-out);
+}
+
+.inv-sum:active {
+  background: var(--border);
+}
+
+@media (hover: hover) {
+  .inv-sum:hover {
+    background: var(--accent-dim);
+  }
+}
+
+.inv-sum:focus-visible,
+.finding-head:focus-visible {
+  outline-offset: -2px;
+}
+
+.inv-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.inv-risk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.inv-score {
+  font-size: 1.9rem;
+}
+
+.inv-action strong::first-letter {
+  text-transform: uppercase;
+}
+
+.inv-action {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.inv-k {
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.inv-time {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.inv-body {
+  padding: 0.25rem 1rem 1rem calc(1rem + 6px + 0.75rem);
+  animation: inv-in 180ms var(--ease-out);
+}
+
+@keyframes inv-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.inv-summary p {
+  margin: 0 0 0.35rem;
+  white-space: pre-line;
+}
+
+.inv-summary p.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  margin-bottom: 0.4rem;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .link-btn:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+.inv-risk-label {
+  margin: 0 0 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.inv-section {
+  margin-bottom: 0.75rem;
+}
+
+.inv-h {
+  margin: 0 0 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.inv-more > .findings {
+  margin-top: 0.4rem;
+}
+
+.finding + .finding {
+  border-top: 1px solid var(--border);
+}
+
+.finding-head,
+.finding-flat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.6rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.finding-flat {
+  padding-left: calc(0.75rem + 6px + 0.6rem);
+}
+
+.finding-head::before {
+  align-self: center;
+}
+
+.finding-desc {
+  flex: 1 1 18rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.finding-cat {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.finding-evidence {
+  padding: 0 0.75rem 0.65rem calc(0.75rem + 6px + 0.6rem);
+}
+
+.finding-evidence p {
+  margin: 0.15rem 0 0;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.inv-evidence {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.inv-evidence-body {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.inv-evidence-body .trace {
+  margin-top: 0.25rem;
+}
+
+.inv-meta {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .inv-sum {
+    grid-template-columns: 6px 1fr auto;
+    grid-template-areas:
+      'c name time'
+      '. status risk'
+      '. action action';
+    gap: 0.35rem 0.6rem;
+  }
+
+  .inv-sum::before {
+    grid-area: c;
+  }
+
+  .inv-name {
+    grid-area: name;
+  }
+
+  .inv-time {
+    grid-area: time;
+  }
+
+  .inv-status {
+    grid-area: status;
+  }
+
+  .inv-risk {
+    grid-area: risk;
+    justify-self: end;
+  }
+
+  .inv-action {
+    grid-area: action;
+    flex-direction: row;
+    gap: 0.5rem;
+    align-items: baseline;
+  }
+
+  .inv-body {
+    padding-left: 1rem;
+  }
 }
 
 .sev-dot {

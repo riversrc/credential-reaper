@@ -5,6 +5,7 @@ import { TheGrid } from './pages/TheGrid';
 import { IdentityDetails } from './pages/IdentityDetails';
 import { Investigations } from './pages/Investigations';
 import { TheAfterlife } from './pages/TheAfterlife';
+import { Activity } from './pages/Activity';
 import { Remediation } from './pages/Remediation';
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
         <Route path="identities/:id" element={<IdentityDetails />} />
         <Route path="investigations" element={<Investigations />} />
         <Route path="afterlife" element={<TheAfterlife />} />
+        <Route path="activity" element={<Activity />} />
         <Route path="remediation" element={<Remediation />} />
       </Route>
     </Routes>

@@ -6,6 +6,8 @@ import type {
   AuditEvent,
   CredentialMetadata,
   IdentityDependency,
+  InvestigationEvent,
+  SecurityEvent,
   FindingBasis,
   Investigation,
   InvestigationFinding,
@@ -17,7 +19,7 @@ import type {
   ToolTraceEntry,
   UsageEvent,
 } from '@credential-reaper/shared';
-import { callReducer, encodeOption, sqlQuery, sqlString, type SpacetimeEnv } from './client.js';
+import { callReducer, encodeOption, sqlInt, sqlQuery, sqlString, type SpacetimeEnv } from './client.js';
 import {
   seedCredentials,
   seedDependencies,
@@ -112,7 +114,7 @@ function encodeTrace(trace: ToolTraceEntry[]) {
 }
 
 export async function recordFindingRow(env: SpacetimeEnv, investigationId: string, finding: InvestigationFinding): Promise<void> {
-  await callReducer(env, 'record_finding', { investigationId, ...finding });
+  await callReducer(env, 'record_finding', { investigationId, ...finding, recordedAt: new Date().toISOString() });
 }
 
 export async function completeInvestigationRow(
@@ -172,6 +174,53 @@ export async function fetchRemediationPlan(env: SpacetimeEnv, id: string): Promi
 
 export async function simulateRemediationRow(env: SpacetimeEnv, planId: string, simulatedAt: string, actor: string): Promise<void> {
   await callReducer(env, 'simulate_remediation', { planId, simulatedAt, actor });
+}
+
+export async function decideRemediationRow(env: SpacetimeEnv, decision: 'approve' | 'reject', planId: string, decidedAt: string, actor: string): Promise<void> {
+  await callReducer(env, `${decision}_remediation`, { planId, decidedAt, actor });
+}
+
+/** Investigations for this identity still marked running (the caller decides which are stale). */
+export async function fetchRunningInvestigations(env: SpacetimeEnv, identityId: string): Promise<Pick<Investigation, 'id' | 'startedAt'>[]> {
+  return sqlQuery(env, `SELECT id, started_at FROM investigation WHERE identity_id = ${sqlString(identityId)} AND status = 'running'`);
+}
+
+export async function investigationExists(env: SpacetimeEnv, id: string): Promise<boolean> {
+  return (await sqlQuery(env, `SELECT id FROM investigation WHERE id = ${sqlString(id)}`)).length > 0;
+}
+
+export async function recordInvestigationEventRow(
+  env: SpacetimeEnv,
+  event: Omit<InvestigationEvent, 'seq' | 'toolName'> & { toolName: string | null }
+): Promise<void> {
+  await callReducer(env, 'record_investigation_event', { ...event, toolName: encodeOption(event.toolName) });
+}
+
+export const MAX_EVENT_ROWS = 500;
+
+/** Events with seq > after, ascending by seq. SpacetimeDB SQL has no ORDER BY, so sorting happens here. */
+export async function fetchInvestigationEvents(env: SpacetimeEnv, investigationId: string | null, after: number, limit = MAX_EVENT_ROWS): Promise<InvestigationEvent[]> {
+  const scope = investigationId === null ? '' : ` AND investigation_id = ${sqlString(investigationId)}`;
+  const rows = await sqlQuery<InvestigationEvent>(env, `SELECT * FROM investigation_event WHERE seq > ${sqlInt(after)}${scope}`);
+  return rows.sort((a, b) => a.seq - b.seq).slice(0, limit);
+}
+
+/** Security events with seq > after, ascending, optionally limited to one investigation (used by the SSE tail). */
+export async function fetchSecurityEventsAfter(env: SpacetimeEnv, investigationId: string | null, after: number, limit = MAX_EVENT_ROWS): Promise<SecurityEvent[]> {
+  const scope = investigationId === null ? '' : ` AND investigation_id = ${sqlString(investigationId)}`;
+  const rows = await sqlQuery<SecurityEvent>(env, `SELECT * FROM security_event WHERE seq > ${sqlInt(after)}${scope}`);
+  return rows.sort((a, b) => a.seq - b.seq).slice(0, limit);
+}
+
+/** Newest first. Full scan + sort in the Worker (no ORDER BY in SpacetimeDB SQL); fine at demo scale. */
+export async function fetchSecurityEvents(env: SpacetimeEnv, limit: number): Promise<SecurityEvent[]> {
+  const rows = await sqlQuery<SecurityEvent>(env, 'SELECT * FROM security_event');
+  return rows.sort((a, b) => b.seq - a.seq).slice(0, limit);
+}
+
+export async function fetchMaxSeq(env: SpacetimeEnv, table: 'investigation_event' | 'security_event'): Promise<number> {
+  const rows = await sqlQuery<{ seq: number }>(env, `SELECT seq FROM ${table}`);
+  return rows.reduce((max, r) => Math.max(max, r.seq), 0);
 }
 
 let seeded = false;

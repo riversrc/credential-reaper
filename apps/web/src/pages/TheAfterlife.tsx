@@ -42,7 +42,7 @@ export function TheAfterlife() {
     <>
       <div className="page-header">
         <h1>The Afterlife</h1>
-        <p>Investigation history and audit trail — every action taken against a machine identity.</p>
+        <p>Audit trail of every action taken.</p>
       </div>
 
       {error && <StateMessage kind="error">{error}</StateMessage>}

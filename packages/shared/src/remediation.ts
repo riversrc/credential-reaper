@@ -21,4 +21,7 @@ export interface RemediationPlan {
   createdAt: string;
   /** Set when a simulated (non-destructive) dry run has been recorded. */
   simulatedAt: string | null;
+  /** When a human approved or rejected the plan (absent on plans that predate approval). */
+  decidedAt?: string | null;
+  decidedBy?: string | null;
 }

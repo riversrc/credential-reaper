@@ -38,7 +38,7 @@ export function TheGrid() {
           <h1>The Grid</h1>
           <DemoChip />
         </div>
-        <p>Machine identity inventory — every service account, key, cert, and bot we know about.</p>
+        <p>Every machine identity on record.</p>
       </div>
 
       {error && <StateMessage kind="error">{error}</StateMessage>}

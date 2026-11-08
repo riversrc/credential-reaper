@@ -6,6 +6,7 @@ const links = [
   { to: '/grid', label: 'The Grid' },
   { to: '/investigations', label: 'Investigations' },
   { to: '/afterlife', label: 'The Afterlife' },
+  { to: '/activity', label: 'Activity' },
   { to: '/remediation', label: 'Remediation' },
 ];
 

@@ -42,7 +42,7 @@ export function Remediation() {
         <p>Proposed retirement and migration plans.</p>
       </div>
       <p className="safety-line" style={{ marginBottom: '1rem' }}>
-        Simulation is always a dry run. No live credential is ever touched.
+        Dry run — no live credential is touched.
       </p>
 
       {loadError && <StateMessage kind="error">{loadError}</StateMessage>}

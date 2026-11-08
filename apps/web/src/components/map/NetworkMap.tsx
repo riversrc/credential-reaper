@@ -253,7 +253,7 @@ export function MapLegend() {
       <li>{swatch('risk-medium state-stale')}Stale</li>
       <li>{swatch('risk-critical state-orphaned', true)}Orphaned, no owner link</li>
       <li>{swatch('risk-low state-retired')}Retired</li>
-      <li className="legend-note">Border colour = backend risk level, never colour alone: label, glyph and ring style repeat it</li>
+      <li className="legend-note">Risk is shown by border, ring style and label</li>
     </ul>
   );
 }

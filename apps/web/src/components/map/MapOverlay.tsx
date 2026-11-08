@@ -39,7 +39,7 @@ function RiskRing({ level, score }: { level: RiskLevel; score: number }) {
             <i key={n} className={n <= RISK_PIPS[level] ? 'on' : undefined} />
           ))}
         </span>
-        <span className="muted-sm">computed by the backend</span>
+        <span className="muted-sm">backend-computed</span>
       </div>
     </div>
   );

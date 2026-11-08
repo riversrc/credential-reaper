@@ -8,14 +8,36 @@ import type {
   CredentialMetadata,
   IdentityDependency,
   Investigation,
+  InvestigationEvent,
   MachineIdentity,
   PermissionGrant,
   RemediationPlan,
+  SecurityEvent,
   StartInvestigationRequest,
   UsageEvent,
 } from '@credential-reaper/shared';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8787';
+
+/** Error carrying the HTTP status and the server's `error` code so callers can tell a 409 from a 502. */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** The request never produced an HTTP response (network down, CORS, server stopped). */
+export class NetworkError extends Error {
+  constructor() {
+    super('Could not reach the server. Check that the API is running.');
+    this.name = 'NetworkError';
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -25,12 +47,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { 'Content-Type': 'application/json', ...init?.headers },
     });
   } catch {
-    throw new Error(`Could not reach the API at ${API_BASE_URL}. Is the Worker running (pnpm dev:api)?`);
+    throw new NetworkError();
   }
 
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as ApiError | null;
-    throw new Error(body?.message ?? `Request to ${path} failed with status ${response.status}`);
+    throw new ApiRequestError(body?.message ?? `Request to ${path} failed with status ${response.status}`, response.status, body?.error ?? null);
   }
 
   return response.json() as Promise<T>;
@@ -63,14 +85,64 @@ export function fetchRemediationPlans(): Promise<RemediationPlan[]> {
 }
 
 /**
- * Starts an investigation and waits for the Worker to finish it. The Worker
- * runs the full investigate-and-complete cycle synchronously within this one
- * request, so the returned investigation is already in its final state
- * ("completed" or "failed") — there's no separate polling step.
+ * Starts an investigation and waits for the Worker to finish it. The request blocks until the run is
+ * "completed" or "failed", so generate `investigationId` first and open the progress feed with it
+ * before awaiting this call.
  */
-export function startInvestigation(identityId: string, requestedBy: string): Promise<Investigation> {
-  const body: StartInvestigationRequest = { identityId, requestedBy };
+export function startInvestigation(identityId: string, requestedBy: string, investigationId: string): Promise<Investigation> {
+  const body: StartInvestigationRequest = { identityId, requestedBy, investigationId };
   return request('/api/investigations', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function fetchInvestigationEvents(investigationId: string, after: number): Promise<InvestigationEvent[]> {
+  return request(`/api/investigations/${encodeURIComponent(investigationId)}/events?after=${after}`);
+}
+
+export function fetchSecurityEvents(limit: number): Promise<SecurityEvent[]> {
+  return request(`/api/security-events?limit=${limit}`);
+}
+
+export interface StreamParams {
+  investigationId?: string;
+  invAfter?: number;
+  secAfter?: number;
+}
+
+export interface StreamHandlers {
+  onInvestigationEvent?: (event: InvestigationEvent) => void;
+  onSecurityEvent?: (event: SecurityEvent) => void;
+  onOpen: () => void;
+  /** The server announced it is closing the connection on purpose; EventSource will resume by itself. */
+  onReconnect: () => void;
+  onError: () => void;
+}
+
+/** Opens the Server-Sent Events stream. Returns a function that closes it. */
+export function openEventStream(params: StreamParams, handlers: StreamHandlers): () => void {
+  const query = new URLSearchParams();
+  if (params.investigationId) query.set('investigationId', params.investigationId);
+  if (params.invAfter !== undefined) query.set('invAfter', String(params.invAfter));
+  if (params.secAfter !== undefined) query.set('secAfter', String(params.secAfter));
+  const source = new EventSource(`${API_BASE_URL}/api/events/stream?${query}`);
+  const parse = <T,>(e: MessageEvent): T | null => {
+    try {
+      return JSON.parse(e.data as string) as T;
+    } catch {
+      return null;
+    }
+  };
+  source.onopen = () => handlers.onOpen();
+  source.onerror = () => handlers.onError();
+  source.addEventListener('reconnect', () => handlers.onReconnect());
+  source.addEventListener('investigation-event', (e) => {
+    const event = parse<InvestigationEvent>(e as MessageEvent);
+    if (event) handlers.onInvestigationEvent?.(event);
+  });
+  source.addEventListener('security-event', (e) => {
+    const event = parse<SecurityEvent>(e as MessageEvent);
+    if (event) handlers.onSecurityEvent?.(event);
+  });
+  return () => source.close();
 }
 
 export function simulateRemediation(planId: string): Promise<RemediationPlan> {

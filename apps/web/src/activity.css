@@ -1,0 +1,459 @@
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Feed indicator ---------- */
+
+.feed-ind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.feed-ind i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+
+.feed-live {
+  color: var(--accent);
+}
+
+.feed-live i {
+  background: currentColor;
+}
+
+.feed-polling {
+  color: var(--medium);
+}
+
+.feed-polling i {
+  background: linear-gradient(90deg, currentColor 50%, transparent 50%);
+}
+
+.feed-offline {
+  color: var(--critical);
+}
+
+.feed-offline i {
+  transform: rotate(45deg);
+}
+
+/* ---------- Agent activity panel ---------- */
+
+.activity {
+  margin-bottom: 1rem;
+}
+
+.activity-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.activity-head h3 {
+  margin: 0;
+}
+
+.activity-id {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 0 0 1rem;
+}
+
+.activity-stats dt {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.activity-stats dd {
+  margin: 0.1rem 0 0;
+  font-family: var(--font-terminal);
+  font-size: 1.5rem;
+  line-height: 1.1;
+}
+
+.phase-completed {
+  color: var(--accent);
+}
+
+.phase-failed {
+  color: var(--critical);
+}
+
+.stage-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 2px solid var(--border-strong);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.stage + .stage {
+  margin-left: 4px;
+}
+
+.stage-mark {
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+}
+
+.stage-done {
+  border-top-color: var(--accent);
+  color: var(--text);
+}
+
+.stage-done .stage-mark {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.stage-current {
+  border-top-color: var(--accent);
+  color: var(--accent);
+}
+
+.stage-current .stage-mark {
+  background: repeating-linear-gradient(45deg, var(--accent) 0 2px, transparent 2px 4px);
+}
+
+.stage-failed {
+  border-top-color: var(--critical);
+  color: var(--critical);
+}
+
+.stage-failed .stage-mark {
+  background: var(--critical);
+}
+
+.activity-counter {
+  margin: 0 0 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.activity-none {
+  margin: 0;
+}
+
+.activity-tools,
+.activity-log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.activity-tools {
+  border: 1px solid var(--border);
+}
+
+.act-tool + .act-tool {
+  border-top: 1px solid var(--border);
+}
+
+.act-tool-sum {
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+}
+
+.act-tool-n {
+  flex: none;
+  width: 2.2rem;
+}
+
+.act-tool-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  overflow-wrap: anywhere;
+}
+
+.act-tool-name code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+}
+
+.act-tool-time {
+  flex: none;
+  min-width: 4rem;
+  text-align: right;
+}
+
+.act-tool-body {
+  padding: 0 0.75rem 0.6rem 3.4rem;
+}
+
+.act-tool-body p {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-log {
+  margin-top: 0.75rem;
+}
+
+.activity-log ol {
+  margin-top: 0.4rem;
+  border-left: 1px solid var(--border);
+}
+
+.activity-log li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.74rem;
+}
+
+.act-log-type {
+  color: var(--signal);
+}
+
+.act-log-details {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 560px) {
+  .stage {
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+
+  .act-tool-sum {
+    flex-wrap: wrap;
+  }
+
+  .act-tool-name {
+    flex-basis: calc(100% - 3rem);
+  }
+
+  .act-tool-body {
+    padding-left: 0.75rem;
+  }
+}
+
+/* ---------- Security activity ---------- */
+
+.secact-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.secact-head .filter-bar {
+  flex: 1;
+}
+
+.secact-newbar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-top-width: 2px;
+  font-size: 0.74rem;
+}
+
+.secact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.secact-compact .secact-list {
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.secact-item + .secact-item {
+  border-top: 1px solid var(--border);
+}
+
+.secact-sum {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.2rem 0.75rem;
+  align-items: baseline;
+  padding: 0.6rem 0.9rem;
+  transition: background-color 150ms var(--ease-out);
+}
+
+.secact-sum::before {
+  display: none;
+}
+
+.secact-sum:hover {
+  background: color-mix(in srgb, var(--accent-dim) 55%, transparent);
+}
+
+.secact-sum:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.secact-time {
+  grid-row: 1 / span 2;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.secact-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  font-size: 0.7rem;
+}
+
+.secact-type {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.secact-summary {
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
+.secact-item[open] > .secact-sum {
+  background: color-mix(in srgb, var(--accent-dim) 40%, transparent);
+}
+
+.secact-body {
+  padding: 0.5rem 0.9rem 0.8rem calc(6.5rem + 0.75rem + 0.9rem);
+}
+
+.secact-body p {
+  margin: 0 0 0.6rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.secact-body dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.15rem 0.9rem;
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.secact-body dt {
+  color: var(--text-dim);
+}
+
+.secact-body dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid currentColor;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.kind-chip svg {
+  width: 11px;
+  height: 11px;
+}
+
+.kind-observed {
+  color: var(--text-dim);
+}
+
+.kind-ai-finding {
+  color: var(--signal);
+  border-style: dashed;
+}
+
+.kind-user-action {
+  color: var(--accent);
+  border-width: 2px;
+}
+
+@media (max-width: 560px) {
+  .secact-sum {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .secact-time {
+    grid-row: auto;
+  }
+
+  .secact-body {
+    padding-left: 0.9rem;
+  }
+}
+
+.secact-compact .secact-sum {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.secact-compact .secact-time {
+  grid-row: auto;
+}
+
+.secact-compact .secact-body {
+  padding-left: 0.9rem;
+}

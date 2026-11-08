@@ -29,7 +29,7 @@ export const MAX_FINDINGS = 12;
 const MAX_USAGE_EVENTS = 100;
 const MAX_RESULT_CHARS = 8000;
 
-const RETRIEVAL_TOOLS = [
+export const RETRIEVAL_TOOLS = [
   'get_identity_details',
   'get_ownership',
   'get_permissions',
@@ -71,6 +71,30 @@ export interface Toolbox {
   call(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   /** Fresh deterministic risk computation straight from SpacetimeDB (not from anything the model said). */
   computeRisk(): Promise<RiskResult>;
+}
+
+/** Static, user-facing descriptions. Activity events never carry tool arguments or results, only these strings. */
+const TOOL_ACTIVITY: Record<string, string> = {
+  get_identity_details: 'Reading identity record and credential metadata',
+  get_ownership: 'Checking ownership',
+  get_permissions: 'Reading permission grants',
+  get_dependencies: 'Listing recorded dependencies',
+  get_usage_history: 'Reviewing usage history',
+  get_risk_assessment: 'Computing the deterministic risk assessment',
+  record_finding: 'Recording a finding',
+  recommend_remediation: 'Proposing a remediation plan for human review',
+};
+const UNRECOGNIZED_TOOL_ACTIVITY = 'Received an unrecognized tool request';
+
+/** Safe-by-construction progress notifications: `tool` is a known tool name or null, never raw model text. */
+export type ToolboxEvent =
+  | { type: 'tool-started'; seq: number; tool: string | null; message: string; analysis: boolean }
+  | { type: 'tool-finished'; seq: number; tool: string | null; message: string; status: ToolTraceEntry['status']; durationMs: number; detail: string }
+  | { type: 'finding-recorded'; number: number; category: string; severity: string; basis: string };
+
+export interface ToolboxOptions {
+  /** Awaited in order; failures are caught and logged here and never affect the tool call. */
+  onEvent?: (event: ToolboxEvent) => Promise<void>;
 }
 
 export interface ToolboxContext {
@@ -214,7 +238,7 @@ function oneOf<T extends string>(args: Record<string, unknown>, key: string, all
 
 class ToolInputError extends Error {}
 
-export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext): Toolbox {
+export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext, options: ToolboxOptions = {}): Toolbox {
   const state: ToolboxState = { findings: [], recommendation: null, trace: [] };
   const retrieved = new Map<RetrievalTool, string[]>();
   let riskChecked = false;
@@ -410,9 +434,38 @@ export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext): Toolbox {
     }
   }
 
+  async function emit(event: ToolboxEvent): Promise<void> {
+    if (!options.onEvent) return;
+    try {
+      await options.onEvent(event);
+    } catch {
+      console.log(JSON.stringify({ event: 'activity_event_failed', investigationId: ctx.investigationId, type: event.type }));
+    }
+  }
+
+  /** Emits the started / finished pair for a trace entry; `known` is false for tool names we do not offer. */
+  function activity(name: string) {
+    const known = Object.hasOwn(TOOL_ACTIVITY, name);
+    return {
+      tool: known ? name : null,
+      message: known ? TOOL_ACTIVITY[name]! : UNRECOGNIZED_TOOL_ACTIVITY,
+      analysis: name === 'record_finding' || name === 'recommend_remediation',
+    };
+  }
+
+  async function emitFinished(name: string, entry: ToolTraceEntry): Promise<void> {
+    const a = activity(name);
+    const outcome = entry.status === 'ok' ? 'done' : entry.status === 'rejected' ? 'rejected' : 'failed';
+    // Internal error text and unrecognized tool names stay out of events; they remain only in the stored trace.
+    const detail = entry.status === 'error' ? 'internal error' : a.tool === null ? 'tool is not available' : entry.summary;
+    await emit({ type: 'tool-finished', seq: entry.seq, tool: a.tool, message: `${a.message} (${outcome})`, status: entry.status, durationMs: entry.durationMs, detail });
+  }
+
   async function call(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const started = Date.now();
     const seq = state.trace.length + 1;
+    const a = activity(name);
+    await emit({ type: 'tool-started', seq, tool: a.tool, message: a.message, analysis: a.analysis });
     let result: ToolResult;
     let status: ToolTraceEntry['status'];
     let summary: string;
@@ -431,8 +484,14 @@ export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext): Toolbox {
     }
 
     const durationMs = Date.now() - started;
-    state.trace.push({ seq, tool: truncate(name, 60), status, summary, durationMs });
+    const entry: ToolTraceEntry = { seq, tool: truncate(name, 60), status, summary, durationMs };
+    state.trace.push(entry);
     console.log(JSON.stringify({ event: 'tool_call', investigationId: ctx.investigationId, seq, tool: name, status, durationMs }));
+    await emitFinished(name, entry);
+    if (name === 'record_finding' && status === 'ok') {
+      const f = state.findings[state.findings.length - 1]!;
+      await emit({ type: 'finding-recorded', number: state.findings.length, category: f.category, severity: f.severity, basis: f.basis });
+    }
     return result;
   }
 
@@ -449,7 +508,12 @@ export function createToolbox(env: SpacetimeEnv, ctx: ToolboxContext): Toolbox {
       }
       let result: ToolResult;
       if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        state.trace.push({ seq: state.trace.length + 1, tool: truncate(name, 60), status: 'rejected', summary: 'arguments were not a valid JSON object', durationMs: 0 });
+        const a = activity(name);
+        const seq = state.trace.length + 1;
+        await emit({ type: 'tool-started', seq, tool: a.tool, message: a.message, analysis: a.analysis });
+        const entry: ToolTraceEntry = { seq, tool: truncate(name, 60), status: 'rejected', summary: 'arguments were not a valid JSON object', durationMs: 0 };
+        state.trace.push(entry);
+        await emitFinished(name, entry);
         console.log(JSON.stringify({ event: 'tool_call', investigationId: ctx.investigationId, tool: name, status: 'rejected', reason: 'invalid_json_arguments' }));
         result = { ok: false, error: 'Tool arguments must be a valid JSON object.' };
       } else {

@@ -11,7 +11,7 @@
 //
 // Run with the SpacetimeDB CLI (not included in this repo):
 //   spacetime dev --project-path spacetime/module
-import { schema, table, t } from 'spacetimedb/server';
+import { schema, SenderError, table, t } from 'spacetimedb/server';
 
 const finding = t.object('Finding', {
   id: t.string(),
@@ -144,6 +144,9 @@ const spacetimedb = schema({
       status: t.string(),
       createdAt: t.string(),
       simulatedAt: t.option(t.string()),
+      // Added after the first publish with defaults so existing rows auto-migrate.
+      decidedAt: t.option(t.string()).default(undefined),
+      decidedBy: t.option(t.string()).default(undefined),
     }
   ),
 
@@ -161,9 +164,92 @@ const spacetimedb = schema({
       details: t.string(),
     }
   ),
+
+  // Progress events for one running investigation (what the agent is doing right now).
+  // Same caveat as every table here: public and no reducer checks ctx.sender (see CLAUDE.md
+  // section 4 "no auth on the local module"), so any caller can read or append rows.
+  investigationEvent: table(
+    { public: true, indexes: [{ accessor: 'byInvestigation', algorithm: 'btree', columns: ['investigationId'] }] },
+    {
+      seq: t.u64().primaryKey().autoInc(),
+      investigationId: t.string(),
+      timestamp: t.string(),
+      eventType: t.string(),
+      stage: t.string(),
+      toolName: t.option(t.string()),
+      status: t.string(),
+      message: t.string(),
+      details: t.string(),
+    }
+  ),
+
+  // Live Security Activity feed. Rows are inserted inside the reducer that performs the state
+  // change they describe, so an event can neither be lost nor invented. Same no-auth caveat as above.
+  securityEvent: table(
+    { public: true },
+    {
+      seq: t.u64().primaryKey().autoInc(),
+      id: t.string().unique(),
+      timestamp: t.string(),
+      kind: t.string(),
+      type: t.string(),
+      severity: t.option(t.string()),
+      identityId: t.option(t.string()),
+      identityName: t.option(t.string()),
+      investigationId: t.option(t.string()),
+      remediationId: t.option(t.string()),
+      source: t.string(),
+      actor: t.string(),
+      summary: t.string(),
+      details: t.string(),
+    }
+  ),
 });
 
 export default spacetimedb;
+
+const SUMMARY_MAX = 140;
+
+function preview(text: string): string {
+  return text.length <= SUMMARY_MAX ? text : `${text.slice(0, SUMMARY_MAX - 1)}…`;
+}
+
+interface SecurityEventInput {
+  id: string;
+  timestamp: string;
+  kind: 'observed' | 'ai-finding' | 'user-action';
+  type: string;
+  severity?: string;
+  identityId?: string;
+  identityName?: string;
+  investigationId?: string;
+  remediationId?: string;
+  source: string;
+  actor: string;
+  summary: string;
+  details: string;
+}
+
+/** Idempotent on the deterministic `id`: re-running the same state change never duplicates the event. */
+function emitSecurityEvent(ctx: { db: any }, e: SecurityEventInput): void {
+  if (ctx.db.securityEvent.id.find(e.id)) return;
+  ctx.db.securityEvent.insert({
+    seq: 0n,
+    id: e.id,
+    timestamp: e.timestamp,
+    kind: e.kind,
+    type: e.type,
+    severity: e.severity,
+    identityId: e.identityId,
+    identityName: e.identityName,
+    investigationId: e.investigationId,
+    remediationId: e.remediationId,
+    source: e.source,
+    actor: e.actor,
+    summary: preview(e.summary),
+    details: e.details,
+  });
+}
 
 // Seed reducers: the only way to write rows into the five "static inventory"
 // tables, since nothing in the app creates/edits machine identities today.
@@ -263,6 +349,14 @@ export const startInvestigation = spacetimedb.reducer(
     source: t.string(),
   },
   (ctx, { id, identityId, identityName, requestedBy, startedAt, source }) => {
+    // Atomic version of the Worker's cost-abuse guard (parallel requests can't slip past a check-then-insert).
+    // Compares the caller-supplied timestamps only, so it stays deterministic. Keep in sync with the Worker's 200s.
+    const startedMs = Date.parse(startedAt);
+    for (const other of ctx.db.investigation.byIdentity.filter(identityId)) {
+      if (other.status === 'running' && startedMs - Date.parse(other.startedAt) < 200_000) {
+        throw new SenderError(`An investigation of ${identityId} is already running`);
+      }
+    }
     ctx.db.investigation.insert({
       id,
       identityId,
@@ -292,6 +386,19 @@ export const startInvestigation = spacetimedb.reducer(
       remediationId: undefined,
       details: `Investigation started for ${identityName}.`,
     });
+    emitSecurityEvent(ctx, {
+      id: `${id}-started`,
+      timestamp: startedAt,
+      kind: 'user-action',
+      type: 'investigation-started',
+      identityId,
+      identityName,
+      investigationId: id,
+      source: 'operator',
+      actor: requestedBy,
+      summary: `Investigation started for ${identityName}`,
+      details: `${requestedBy} started an investigation of ${identityName} (${identityId}) using the ${source} analyst.`,
+    });
   }
 );
 
@@ -305,8 +412,9 @@ export const recordFinding = spacetimedb.reducer(
     basis: t.string(),
     description: t.string(),
     evidence: t.string(),
+    recordedAt: t.string(),
   },
-  (ctx, { investigationId, id, category, severity, basis, description, evidence }) => {
+  (ctx, { investigationId, id, category, severity, basis, description, evidence, recordedAt }) => {
     const existing = ctx.db.investigation.id.find(investigationId);
     if (!existing || existing.status !== 'running') return;
 
@@ -314,6 +422,20 @@ export const recordFinding = spacetimedb.reducer(
       ...existing,
       findings: [...existing.findings, { id, category, severity, description, evidence }],
       findingBases: [...existing.findingBases, basis],
+    });
+    emitSecurityEvent(ctx, {
+      id: `${investigationId}-finding-${id}`,
+      timestamp: recordedAt,
+      kind: 'ai-finding',
+      type: 'finding-discovered',
+      severity,
+      identityId: existing.identityId,
+      identityName: existing.identityName,
+      investigationId,
+      source: existing.source,
+      actor: existing.source === 'mock' ? 'nemotron-ai (mock)' : 'nemotron-ai',
+      summary: `[${basis}] ${description}`,
+      details: `Category: ${category}\nSeverity: ${severity}\nBasis: ${basis}\nDescription: ${description}\nEvidence: ${evidence}`,
     });
   }
 );
@@ -357,6 +479,26 @@ export const completeInvestigation = spacetimedb.reducer(
       remediationId: undefined,
       details: `Investigation completed with ${existing.findings.length} finding(s), risk ${riskScore} (${riskLevel}): recommend ${recommendedAction}.`,
     });
+    emitSecurityEvent(ctx, {
+      id: `${investigationId}-completed`,
+      timestamp: completedAt,
+      kind: 'ai-finding',
+      type: 'investigation-completed',
+      severity: riskLevel,
+      identityId: existing.identityId,
+      identityName: existing.identityName,
+      investigationId,
+      source: existing.source,
+      actor,
+      summary: `Investigation of ${existing.identityName} completed: risk ${riskScore} (${riskLevel}), recommend ${recommendedAction}`,
+      details: [
+        `Findings recorded: ${existing.findings.length}`,
+        `Risk score (computed by the backend, not the AI): ${riskScore}/100`,
+        `Risk level: ${riskLevel}`,
+        `Risk factors: ${riskFactors.length > 0 ? riskFactors.join('; ') : 'none'}`,
+        `Recommended action: ${recommendedAction} (proposal only, requires human approval)`,
+      ].join('\n'),
+    });
   }
 );
 
@@ -384,6 +526,21 @@ export const failInvestigation = spacetimedb.reducer(
       investigationId,
       remediationId: undefined,
       details: `Investigation failed: ${reason}`,
+    });
+    // 'medium': a failed run is a coverage gap (the identity was NOT assessed), not a finding about the identity itself.
+    emitSecurityEvent(ctx, {
+      id: `${investigationId}-failed`,
+      timestamp: completedAt,
+      kind: 'observed',
+      type: 'investigation-failed',
+      severity: 'medium',
+      identityId: existing.identityId,
+      identityName: existing.identityName,
+      investigationId,
+      source: 'worker',
+      actor,
+      summary: `Investigation of ${existing.identityName} failed`,
+      details: reason,
     });
   }
 );
@@ -413,6 +570,8 @@ export const proposeRemediation = spacetimedb.reducer(
       status: 'proposed',
       createdAt,
       simulatedAt: undefined,
+      decidedAt: undefined,
+      decidedBy: undefined,
     });
     ctx.db.auditEvent.insert({
       id: `${id}-proposed`,
@@ -425,17 +584,113 @@ export const proposeRemediation = spacetimedb.reducer(
       remediationId: id,
       details: `${action} plan proposed for ${identityName}.`,
     });
+    const byAi = actor.startsWith('nemotron-ai');
+    emitSecurityEvent(ctx, {
+      id: `${id}-proposed`,
+      timestamp: createdAt,
+      kind: byAi ? 'ai-finding' : 'user-action',
+      type: 'remediation-proposed',
+      identityId,
+      identityName,
+      investigationId,
+      remediationId: id,
+      source: byAi ? (actor.includes('(mock)') ? 'mock' : 'nemotron') : 'operator',
+      actor,
+      summary: `${action} plan proposed for ${identityName}`,
+      details: [
+        `Action: ${action}`,
+        `Justification: ${justification}`,
+        'Steps:',
+        ...steps.map((st) => `  ${st.order}. ${st.description}`),
+        'Status: proposed. Awaiting human approval; no credential has been changed.',
+      ].join('\n'),
+    });
   }
 );
 
-/** Marks a remediation plan as simulated. This never touches a real credential. */
+function requirePlan(ctx: { db: any }, planId: string, expected: string, verb: string) {
+  const plan = ctx.db.remediationPlan.id.find(planId);
+  if (!plan) throw new SenderError(`Remediation plan ${planId} not found`);
+  if (plan.status !== expected) throw new SenderError(`Cannot ${verb} a plan in status "${plan.status}"; it must be "${expected}"`);
+  return plan;
+}
+
+/** Human approval of a proposed plan. Approval alone changes nothing in any real system. */
+export const approveRemediation = spacetimedb.reducer(
+  { planId: t.string(), decidedAt: t.string(), actor: t.string() },
+  (ctx, { planId, decidedAt, actor }) => {
+    const plan = requirePlan(ctx, planId, 'proposed', 'approve');
+    ctx.db.remediationPlan.id.update({ ...plan, status: 'approved', decidedAt, decidedBy: actor });
+    ctx.db.auditEvent.insert({
+      id: `${planId}-approved`,
+      timestamp: decidedAt,
+      action: 'remediation-approved',
+      actor,
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      details: `"${plan.action}" plan approved by ${actor}. Approval does not execute anything; only a dry-run simulation is available.`,
+    });
+    emitSecurityEvent(ctx, {
+      id: `${planId}-approved`,
+      timestamp: decidedAt,
+      kind: 'user-action',
+      type: 'remediation-approved',
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      source: 'operator',
+      actor,
+      summary: `${actor} approved the ${plan.action} plan for ${plan.identityName}`,
+      details: `"${plan.action}" plan for ${plan.identityName} approved by ${actor}. Approval does not execute anything; only a dry-run simulation is available.`,
+    });
+  }
+);
+
+/** Human rejection of a proposed plan. */
+export const rejectRemediation = spacetimedb.reducer(
+  { planId: t.string(), decidedAt: t.string(), actor: t.string() },
+  (ctx, { planId, decidedAt, actor }) => {
+    const plan = requirePlan(ctx, planId, 'proposed', 'reject');
+    ctx.db.remediationPlan.id.update({ ...plan, status: 'rejected', decidedAt, decidedBy: actor });
+    ctx.db.auditEvent.insert({
+      id: `${planId}-rejected`,
+      timestamp: decidedAt,
+      action: 'remediation-rejected',
+      actor,
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      details: `"${plan.action}" plan rejected by ${actor}. No credential was changed.`,
+    });
+    emitSecurityEvent(ctx, {
+      id: `${planId}-rejected`,
+      timestamp: decidedAt,
+      kind: 'user-action',
+      type: 'remediation-rejected',
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      source: 'operator',
+      actor,
+      summary: `${actor} rejected the ${plan.action} plan for ${plan.identityName}`,
+      details: `"${plan.action}" plan for ${plan.identityName} rejected by ${actor}. No credential was changed.`,
+    });
+  }
+);
+
+/** Marks an APPROVED remediation plan as simulated. This never touches a real credential. */
 export const simulateRemediation = spacetimedb.reducer(
   { planId: t.string(), simulatedAt: t.string(), actor: t.string() },
   (ctx, { planId, simulatedAt, actor }) => {
-    const plan = ctx.db.remediationPlan.id.find(planId);
-    if (!plan) return;
+    const plan = requirePlan(ctx, planId, 'approved', 'simulate');
 
     ctx.db.remediationPlan.id.update({ ...plan, status: 'simulated', simulatedAt });
+    const details = `Dry-run simulation completed for "${plan.action}" plan. No live credential was touched.`;
     ctx.db.auditEvent.insert({
       id: `${planId}-simulated-${simulatedAt}`,
       timestamp: simulatedAt,
@@ -445,7 +700,39 @@ export const simulateRemediation = spacetimedb.reducer(
       identityName: plan.identityName,
       investigationId: plan.investigationId,
       remediationId: planId,
-      details: `Dry-run simulation completed for "${plan.action}" plan. No live credential was touched.`,
+      details,
     });
+    emitSecurityEvent(ctx, {
+      id: `${planId}-simulated`,
+      timestamp: simulatedAt,
+      kind: 'user-action',
+      type: 'remediation-simulated',
+      identityId: plan.identityId,
+      identityName: plan.identityName,
+      investigationId: plan.investigationId,
+      remediationId: planId,
+      source: 'operator',
+      actor,
+      summary: `Dry run of the ${plan.action} plan for ${plan.identityName}`,
+      details,
+    });
+  }
+);
+
+/** Appends one progress event for a running investigation. `seq` is assigned by the database. */
+export const recordInvestigationEvent = spacetimedb.reducer(
+  {
+    investigationId: t.string(),
+    timestamp: t.string(),
+    eventType: t.string(),
+    stage: t.string(),
+    toolName: t.option(t.string()),
+    status: t.string(),
+    message: t.string(),
+    details: t.string(),
+  },
+  (ctx, { investigationId, timestamp, eventType, stage, toolName, status, message, details }) => {
+    if (!ctx.db.investigation.id.find(investigationId)) return;
+    ctx.db.investigationEvent.insert({ seq: 0n, investigationId, timestamp, eventType, stage, toolName, status, message, details });
   }
 );

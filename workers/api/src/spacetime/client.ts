@@ -85,6 +85,24 @@ function decodeRow(elements: SchemaElement[], row: unknown[]): Record<string, un
   return result;
 }
 
+/**
+ * Failure talking to SpacetimeDB. `detail` (upstream response text) is for server-side logs only:
+ * `message` never contains the SpacetimeDB URL or response body, so it is safe to log, and
+ * route handlers must still never forward either to clients.
+ */
+export class SpacetimeError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly detail: string
+  ) {
+    super(message);
+  }
+}
+
+/** Reducers that reject a call with a SenderError (e.g. a disallowed status transition) answer HTTP 530. */
+export const REDUCER_REJECTED_STATUS = 530;
+
 function authHeader(env: SpacetimeEnv): Record<string, string> {
   return env.SPACETIME_AUTH_TOKEN ? { Authorization: `Bearer ${env.SPACETIME_AUTH_TOKEN}` } : {};
 }
@@ -97,7 +115,7 @@ export async function sqlQuery<T>(env: SpacetimeEnv, query: string): Promise<T[]
     body: query,
   });
   if (!response.ok) {
-    throw new Error(`SpacetimeDB SQL query failed (${response.status}): ${await response.text()}`);
+    throw new SpacetimeError(`SpacetimeDB SQL query failed (${response.status})`, response.status, (await response.text()).slice(0, 500));
   }
   const [result] = (await response.json()) as SqlStatementResult[];
   if (!result) return [];
@@ -112,16 +130,23 @@ export async function callReducer(env: SpacetimeEnv, reducerName: string, args: 
     body: JSON.stringify(args),
   });
   if (!response.ok) {
-    throw new Error(`SpacetimeDB reducer "${reducerName}" failed (${response.status}): ${await response.text()}`);
+    throw new SpacetimeError(`SpacetimeDB reducer "${reducerName}" failed (${response.status})`, response.status, (await response.text()).slice(0, 500));
   }
 }
 
 /** Safely embeds a string literal in a SQL statement (the HTTP SQL endpoint takes raw text, no bind params). */
 export function sqlString(value: string): string {
+  if (typeof value !== 'string') throw new TypeError(`sqlString expects a string, got ${typeof value}`);
   return `'${value.replace(/'/g, "''")}'`;
 }
 
 /** Encodes a nullable value as a SpacetimeDB Option argument for a reducer call. */
 export function encodeOption<T>(value: T | null | undefined): { some: T } | { none: Record<string, never> } {
   return value === null || value === undefined ? { none: {} } : { some: value };
+}
+
+/** Embeds an integer cursor/limit in a SQL statement; rejects anything that is not a non-negative safe integer. */
+export function sqlInt(value: number): string {
+  if (!Number.isSafeInteger(value) || value < 0) throw new TypeError('sqlInt expects a non-negative safe integer');
+  return String(value);
 }

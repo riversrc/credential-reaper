@@ -71,12 +71,14 @@ The Worker seeds demo data into SpacetimeDB automatically on its first request (
 Without a key the Worker uses the scripted mock. To use Nemotron, give the Worker a key from [build.nvidia.com](https://build.nvidia.com) — it never reaches the browser:
 
 ```bash
-# local dev: create workers/api/.dev.vars (gitignored) containing
-NVIDIA_API_KEY=nvapi-...
-# optional: NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b (the default)
+# local dev: copy the template, then fill in the key (workers/api/.dev.vars is gitignored)
+cp workers/api/.dev.vars.example workers/api/.dev.vars
+# set NVIDIA_API_KEY=nvapi-...   (optional: NEMOTRON_MODEL, defaults to nvidia/nemotron-3-super-120b-a12b)
 
 # deployed: wrangler secret put NVIDIA_API_KEY
 ```
+
+Leave `NVIDIA_API_KEY` empty in `.dev.vars` to stay on the mock provider. With a real key set, **every** `POST /api/investigations` calls NVIDIA and uses credits, so use an empty key for UI testing.
 
 ## Running the Worker API on its own
 

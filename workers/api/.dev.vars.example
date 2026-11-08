@@ -1,0 +1,11 @@
+# Copy to .dev.vars (gitignored) for local `wrangler dev`. Never commit real values.
+#
+# Leave NVIDIA_API_KEY empty to use the scripted mock provider (no network calls,
+# safe for testing). A real key makes every investigation call NVIDIA Nemotron.
+NVIDIA_API_KEY=
+
+# Optional. Defaults to nvidia/nemotron-3-super-120b-a12b.
+# NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b
+
+# Optional. Only needed once the SpacetimeDB module requires an authenticated caller.
+# SPACETIME_AUTH_TOKEN=

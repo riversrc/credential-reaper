@@ -55,4 +55,6 @@ export interface Investigation {
 export interface StartInvestigationRequest {
   identityId: string;
   requestedBy: string;
+  /** Optional client-generated UUID v4 so the client can watch this run's events while the request is in flight. */
+  investigationId?: string;
 }

@@ -41,7 +41,7 @@ export function TimeScrubber({ startMs, nowMs, day, onDayChange, playing, onPlay
         <span className="scrubber-date" aria-live="off">
           {label}
         </span>
-        <span className="muted-sm">{atPresent ? 'NOW · backend status' : 'HISTORY · status derived from created / last used / usage events'}</span>
+        <span className="muted-sm">{atPresent ? 'NOW' : 'HISTORY · derived from usage'}</span>
       </div>
       <div className="scrubber-row">
         {!reduced && (

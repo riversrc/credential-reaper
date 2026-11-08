@@ -12,7 +12,8 @@ import { TYPE_LABEL } from '../lib/typeLabels';
 import { MapLegend, NetworkMap } from '../components/map/NetworkMap';
 import { MapOverlay } from '../components/map/MapOverlay';
 import { TimeScrubber } from '../components/map/TimeScrubber';
-import { EventsPanel, HygienePanel, SuggestedPanel } from '../components/landing/HudPanels';
+import { SecurityActivity } from '../components/SecurityActivity';
+import { EventsPanel, HygienePanel } from '../components/landing/HudPanels';
 import '../landing.css';
 
 type Period = 'actual' | '30d' | 'all';
@@ -104,8 +105,7 @@ export function Landing() {
             <span>Nothing forgotten+</span>
           </h1>
           <p className="hero-body">
-            Credential Reaper inventories every <strong>machine identity</strong> you own, investigates the ones that outlived their purpose, and retires
-            them safely, as a dry run first.
+            Find every <strong>machine identity</strong>, investigate the stale ones, retire them safely. Dry run first.
           </p>
           <div className="hero-actions">
             <Link to="/grid" className="btn">
@@ -198,7 +198,7 @@ export function Landing() {
                 {view === 'map' && <MapLegend />}
                 {data.failedDetails > 0 && (
                   <p className="muted-sm map-note" role="status">
-                    {data.failedDetails} identit{data.failedDetails === 1 ? 'y' : 'ies'} drawn without dependency links because the detail request failed.
+                    {data.failedDetails} identit{data.failedDetails === 1 ? 'y' : 'ies'} shown without dependency links (load failed).
                   </p>
                 )}
                 <TimeScrubber
@@ -232,7 +232,7 @@ export function Landing() {
 
       <section className="hud" aria-label="Overview panels">
         <HygienePanel identities={identities} investigations={investigations} plans={plans} />
-        <SuggestedPanel identities={identities} plans={plans} />
+        <SecurityActivity compact />
         <EventsPanel audit={audit} focused={focused} focusedDetail={focused ? details[focused.id] : undefined} />
       </section>
 
@@ -240,11 +240,10 @@ export function Landing() {
         <Verb
           label="Investigate"
           command="reaper investigate <identity>"
-          output={`${num(toolCalls)} controlled tool calls recorded`}
+          output={`${num(toolCalls)} tool calls recorded`}
           prose={
             <>
-              The Netrunner agent reads ownership, permissions, dependencies and usage through a <strong>fixed toolbox</strong>. Risk is computed by the
-              backend, never by the AI.
+              Reads ownership, permissions, dependencies and usage. Risk is <strong>backend-computed</strong>.
             </>
           }
           metric={invCount}
@@ -256,7 +255,7 @@ export function Landing() {
           output={`${num(proposedCount)} open plans: retire, rotate, migrate or monitor`}
           prose={
             <>
-              An investigation can propose a plan with ordered steps, each marked automatable or manual. <strong>Nothing runs</strong> until a person acts.
+              Ordered steps, automatable or manual. <strong>Nothing runs</strong> until a person acts.
             </>
           }
           metric={proposedCount}
@@ -268,8 +267,7 @@ export function Landing() {
           output="no live credential is touched"
           prose={
             <>
-              Simulation marks a plan as a <strong>dry run complete</strong> and writes it to the audit trail. It never calls an identity provider or a
-              secrets manager.
+              Marks a plan <strong>dry-run complete</strong> and logs it to the audit trail.
             </>
           }
           metric={simulatedCount}

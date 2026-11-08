@@ -3,13 +3,14 @@
 // tool_calls responses); every tool call still executes against the real
 // local SpacetimeDB. Requires `spacetime start` + the published module.
 //
-//   cd workers/api && npx tsx scripts/test-nemotron-loop.ts
+//   cd workers/api && SPACETIME_DB_NAME=credential-reaper-qa npx tsx scripts/test-nemotron-loop.ts
 import { runInvestigation, InvestigationFailedError } from '../src/agent/investigate.js';
 import { computeRisk } from '../src/agent/risk.js';
 import { createNemotronProvider, LIMITS } from '../src/providers/nemotron.js';
 import { ensureSeeded, fetchIdentityDetail, fetchInvestigation, fetchRemediationPlans } from '../src/spacetime/repository.js';
 
-const env = { SPACETIME_URL: 'http://localhost:3000', SPACETIME_DB_NAME: 'credential-reaper' };
+// Point at a throwaway database (e.g. SPACETIME_DB_NAME=credential-reaper-qa) to keep test investigations out of the main one.
+const env = { SPACETIME_URL: process.env.SPACETIME_URL ?? 'http://localhost:3000', SPACETIME_DB_NAME: process.env.SPACETIME_DB_NAME ?? 'credential-reaper' };
 const FAKE_KEY = 'nvapi-FAKE-KEY-for-test-0123456789';
 const IDENTITY = 'id-012';
 
