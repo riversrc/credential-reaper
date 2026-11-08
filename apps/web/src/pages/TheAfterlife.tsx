@@ -15,6 +15,7 @@ function formatDateTime(iso: string) {
 const actionLabels: Record<AuditEvent['action'], string> = {
   'investigation-started': 'Investigation started',
   'investigation-completed': 'Investigation completed',
+  'investigation-failed': 'Investigation failed',
   'remediation-proposed': 'Remediation plan proposed',
   'remediation-approved': 'Remediation plan approved',
   'remediation-simulated': 'Remediation simulated',

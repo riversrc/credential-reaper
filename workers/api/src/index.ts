@@ -1,8 +1,8 @@
-import type { ApiError, Investigation, StartInvestigationRequest } from '@credential-reaper/shared';
+import type { ApiError, StartInvestigationRequest } from '@credential-reaper/shared';
+import { InvestigationFailedError, runInvestigation } from './agent/investigate.js';
 import { getAiProvider, type AiProviderEnv } from './providers/index.js';
 import type { SpacetimeEnv } from './spacetime/client.js';
 import {
-  completeInvestigationRow,
   ensureSeeded,
   fetchAuditEvents,
   fetchIdentities,
@@ -12,7 +12,6 @@ import {
   fetchRemediationPlan,
   fetchRemediationPlans,
   simulateRemediationRow,
-  startInvestigationRow,
 } from './spacetime/repository.js';
 
 export interface Env extends AiProviderEnv, SpacetimeEnv {}
@@ -75,54 +74,15 @@ export default {
       if (!detail) return notFound(`Identity ${body.identityId} not found`);
       const { identity } = detail;
 
-      const provider = getAiProvider(env);
-      const id = crypto.randomUUID();
-      const startedAt = new Date().toISOString();
-      await startInvestigationRow(env, {
-        id,
-        identityId: identity.id,
-        identityName: identity.name,
-        requestedBy: body.requestedBy,
-        startedAt,
-        source: provider.name,
-      });
-
-      const result = await provider.investigate({
-        identityName: identity.name,
-        identityType: identity.type,
-        owner: identity.owner,
-        environment: identity.environment,
-        lastUsedAt: identity.lastUsedAt,
-        permissionsSummary: detail.permissions.map((p) => `${p.resource}:${p.scope}`),
-        dependenciesSummary: detail.dependencies.map((d) => d.name),
-        recentUsageSummary: detail.usageHistory.map((u) => u.action),
-      });
-
-      const completedAt = new Date().toISOString();
-      const recommendedAction = result.recommendedAction;
-      await completeInvestigationRow(env, {
-        investigationId: id,
-        completedAt,
-        findings: result.findings,
-        aiSummary: result.summary,
-        recommendedAction,
-        actor: provider.name === 'nemotron' ? 'nemotron-ai' : 'nemotron-ai (mock)',
-      });
-
-      const investigation: Investigation = {
-        id,
-        identityId: identity.id,
-        identityName: identity.name,
-        status: 'completed',
-        startedAt,
-        completedAt,
-        requestedBy: body.requestedBy,
-        findings: result.findings,
-        aiSummary: result.summary,
-        recommendedAction,
-        source: provider.name,
-      };
-      return json(investigation, { status: 201 });
+      try {
+        const investigation = await runInvestigation(env, getAiProvider(env), { identity, requestedBy: body.requestedBy });
+        return json(investigation, { status: 201 });
+      } catch (e) {
+        if (e instanceof InvestigationFailedError) {
+          return json({ error: 'investigation_failed', message: `${e.message} (investigation ${e.investigationId})` } satisfies ApiError, { status: 502 });
+        }
+        throw e;
+      }
     }
 
     const investigationMatch = pathname.match(/^\/api\/investigations\/([^/]+)$/);

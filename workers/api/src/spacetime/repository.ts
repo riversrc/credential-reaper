@@ -6,11 +6,15 @@ import type {
   AuditEvent,
   CredentialMetadata,
   IdentityDependency,
+  FindingBasis,
   Investigation,
   InvestigationFinding,
   MachineIdentity,
   PermissionGrant,
   RemediationPlan,
+  RemediationStep,
+  RiskAssessment,
+  ToolTraceEntry,
   UsageEvent,
 } from '@credential-reaper/shared';
 import { callReducer, encodeOption, sqlQuery, sqlString, type SpacetimeEnv } from './client.js';
@@ -28,28 +32,71 @@ export async function fetchIdentities(env: SpacetimeEnv): Promise<MachineIdentit
   return sqlQuery<MachineIdentity>(env, 'SELECT * FROM machine_identity');
 }
 
+export async function fetchIdentity(env: SpacetimeEnv, id: string): Promise<MachineIdentity | null> {
+  const rows = await sqlQuery<MachineIdentity>(env, `SELECT * FROM machine_identity WHERE id = ${sqlString(id)}`);
+  return rows[0] ?? null;
+}
+
+export function fetchPermissions(env: SpacetimeEnv, identityId: string): Promise<PermissionGrant[]> {
+  return sqlQuery<PermissionGrant>(env, `SELECT * FROM permission_grant WHERE identity_id = ${sqlString(identityId)}`);
+}
+
+export function fetchDependencies(env: SpacetimeEnv, identityId: string): Promise<IdentityDependency[]> {
+  return sqlQuery<IdentityDependency>(env, `SELECT * FROM identity_dependency WHERE identity_id = ${sqlString(identityId)}`);
+}
+
+export function fetchCredentials(env: SpacetimeEnv, identityId: string): Promise<CredentialMetadata[]> {
+  return sqlQuery<CredentialMetadata>(env, `SELECT * FROM credential_metadata WHERE identity_id = ${sqlString(identityId)}`);
+}
+
+export function fetchUsageEvents(env: SpacetimeEnv, identityId: string): Promise<UsageEvent[]> {
+  return sqlQuery<UsageEvent>(env, `SELECT * FROM usage_event WHERE identity_id = ${sqlString(identityId)}`);
+}
+
 export async function fetchIdentityDetail(env: SpacetimeEnv, id: string) {
-  const idLiteral = sqlString(id);
-  const [identities, permissions, dependencies, credentials, usageHistory] = await Promise.all([
-    sqlQuery<MachineIdentity>(env, `SELECT * FROM machine_identity WHERE id = ${idLiteral}`),
-    sqlQuery<PermissionGrant>(env, `SELECT * FROM permission_grant WHERE identity_id = ${idLiteral}`),
-    sqlQuery<IdentityDependency>(env, `SELECT * FROM identity_dependency WHERE identity_id = ${idLiteral}`),
-    sqlQuery<CredentialMetadata>(env, `SELECT * FROM credential_metadata WHERE identity_id = ${idLiteral}`),
-    sqlQuery<UsageEvent>(env, `SELECT * FROM usage_event WHERE identity_id = ${idLiteral}`),
+  const [identity, permissions, dependencies, credentials, usageHistory] = await Promise.all([
+    fetchIdentity(env, id),
+    fetchPermissions(env, id),
+    fetchDependencies(env, id),
+    fetchCredentials(env, id),
+    fetchUsageEvents(env, id),
   ]);
-  const identity = identities[0];
   if (!identity) return null;
   return { identity, permissions, dependencies, credentials, usageHistory };
 }
 
+/** Row shape as stored: the nested finding has no `basis`, and the new columns are flat. */
+type InvestigationRow = Omit<Investigation, 'findings' | 'riskAssessment'> & {
+  findings: Omit<InvestigationFinding, 'basis'>[];
+  findingBases: FindingBasis[];
+  riskScore: number;
+  riskLevel: string;
+  riskFactors: string[];
+};
+
+/**
+ * Rows written before finding bases existed (e.g. the seeded demo investigation)
+ * have no entry in `findingBases`; those findings are treated as confirmed.
+ */
+function toInvestigation(row: InvestigationRow): Investigation {
+  const { findingBases, riskScore, riskLevel, riskFactors, findings, ...rest } = row;
+  return {
+    ...rest,
+    findings: findings.map((f, i) => ({ ...f, basis: findingBases[i] ?? 'confirmed' })),
+    riskAssessment: riskLevel
+      ? { score: riskScore, level: riskLevel as RiskAssessment['level'], factors: riskFactors }
+      : null,
+  };
+}
+
 export async function fetchInvestigations(env: SpacetimeEnv): Promise<Investigation[]> {
-  const rows = await sqlQuery<Investigation>(env, 'SELECT * FROM investigation');
-  return rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  const rows = await sqlQuery<InvestigationRow>(env, 'SELECT * FROM investigation');
+  return rows.map(toInvestigation).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
 export async function fetchInvestigation(env: SpacetimeEnv, id: string): Promise<Investigation | null> {
-  const rows = await sqlQuery<Investigation>(env, `SELECT * FROM investigation WHERE id = ${sqlString(id)}`);
-  return rows[0] ?? null;
+  const rows = await sqlQuery<InvestigationRow>(env, `SELECT * FROM investigation WHERE id = ${sqlString(id)}`);
+  return rows[0] ? toInvestigation(rows[0]) : null;
 }
 
 export async function startInvestigationRow(
@@ -59,18 +106,54 @@ export async function startInvestigationRow(
   await callReducer(env, 'start_investigation', args);
 }
 
+/** Reducer args take top-level keys in camelCase but nested object fields under their snake_case wire names. */
+function encodeTrace(trace: ToolTraceEntry[]) {
+  return trace.map(({ durationMs, ...rest }) => ({ ...rest, duration_ms: durationMs }));
+}
+
+export async function recordFindingRow(env: SpacetimeEnv, investigationId: string, finding: InvestigationFinding): Promise<void> {
+  await callReducer(env, 'record_finding', { investigationId, ...finding });
+}
+
 export async function completeInvestigationRow(
   env: SpacetimeEnv,
   args: {
     investigationId: string;
     completedAt: string;
-    findings: InvestigationFinding[];
     aiSummary: string;
     recommendedAction: string;
+    riskScore: number;
+    riskLevel: string;
+    riskFactors: string[];
+    toolTrace: ToolTraceEntry[];
     actor: string;
   }
 ): Promise<void> {
-  await callReducer(env, 'complete_investigation', args);
+  await callReducer(env, 'complete_investigation', { ...args, toolTrace: encodeTrace(args.toolTrace) });
+}
+
+export async function failInvestigationRow(
+  env: SpacetimeEnv,
+  args: { investigationId: string; completedAt: string; reason: string; toolTrace: ToolTraceEntry[]; actor: string }
+): Promise<void> {
+  await callReducer(env, 'fail_investigation', { ...args, toolTrace: encodeTrace(args.toolTrace) });
+}
+
+export async function proposeRemediationRow(
+  env: SpacetimeEnv,
+  args: {
+    id: string;
+    identityId: string;
+    identityName: string;
+    investigationId: string | null;
+    action: string;
+    justification: string;
+    steps: RemediationStep[];
+    createdAt: string;
+    actor: string;
+  }
+): Promise<void> {
+  await callReducer(env, 'propose_remediation', { ...args, investigationId: encodeOption(args.investigationId) });
 }
 
 export async function fetchAuditEvents(env: SpacetimeEnv): Promise<AuditEvent[]> {
@@ -130,12 +213,18 @@ export async function ensureSeeded(env: SpacetimeEnv): Promise<void> {
 
   const { completedAt, findings, aiSummary, recommendedAction, ...startArgs } = seedInvestigation;
   await callReducer(env, 'start_investigation', startArgs);
-  await callReducer(env, 'complete_investigation', {
+  for (const finding of findings) {
+    await recordFindingRow(env, seedInvestigation.id, finding);
+  }
+  await completeInvestigationRow(env, {
     investigationId: seedInvestigation.id,
     completedAt,
-    findings,
     aiSummary,
     recommendedAction,
+    riskScore: 93,
+    riskLevel: 'critical',
+    riskFactors: ['seeded demo data'],
+    toolTrace: [],
     actor: 'nemotron-ai (mock)',
   });
 

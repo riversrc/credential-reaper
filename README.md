@@ -27,7 +27,8 @@ Built in phases; see git history for what landed at each step.
 
 - ✅ Frontend ↔ Worker: real HTTP calls, configurable via `VITE_API_BASE_URL`.
 - ✅ Worker ↔ SpacetimeDB: real HTTP calls (SQL reads + reducer writes), replacing the old in-memory data store. Data persists across Worker restarts.
-- ⬜ Real NVIDIA Nemotron inference — still mock-only (`NVIDIA_API_KEY` unset).
+- ✅ Netrunner agent: Nemotron tool-calling loop (or a scripted mock without a key) investigates through validated backend tools against SpacetimeDB; findings are labeled confirmed / inferred / unknown, risk is computed deterministically, remediation stays proposed for human approval.
+- ⬜ Live verification of the Nemotron path with a real `NVIDIA_API_KEY` (tested only against a fake endpoint so far).
 
 ## Prerequisites
 
@@ -64,6 +65,18 @@ pnpm dev:web
 ```
 
 The Worker seeds demo data into SpacetimeDB automatically on its first request (checked against the live database, not re-run on every restart). Open http://localhost:5173.
+
+## Enabling real Nemotron
+
+Without a key the Worker uses the scripted mock. To use Nemotron, give the Worker a key from [build.nvidia.com](https://build.nvidia.com) — it never reaches the browser:
+
+```bash
+# local dev: create workers/api/.dev.vars (gitignored) containing
+NVIDIA_API_KEY=nvapi-...
+# optional: NEMOTRON_MODEL=nvidia/nemotron-3-super-120b-a12b (the default)
+
+# deployed: wrangler secret put NVIDIA_API_KEY
+```
 
 ## Running the Worker API on its own
 

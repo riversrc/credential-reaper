@@ -2,10 +2,8 @@
 //
 // This defines the persistent tables and reducers that back the machine
 // identity inventory, investigations, remediation plans, and audit trail.
-// It is not yet wired up to the Cloudflare Worker (workers/api), which
-// currently serves the same shapes from in-memory seed data — swapping the
-// Worker over to call into a published instance of this module is the next
-// integration step.
+// The Cloudflare Worker (workers/api) reads it over SpacetimeDB's HTTP API and
+// writes only through the reducers below.
 //
 // Timestamps are stored as ISO 8601 strings (not SpacetimeDB's native
 // `Timestamp` type) so row shapes match packages/shared exactly and can be
@@ -21,6 +19,14 @@ const finding = t.object('Finding', {
   severity: t.string(),
   description: t.string(),
   evidence: t.string(),
+});
+
+const toolTraceEntry = t.object('ToolTraceEntry', {
+  seq: t.u32(),
+  tool: t.string(),
+  status: t.string(),
+  summary: t.string(),
+  durationMs: t.u32(),
 });
 
 const remediationStep = t.object('RemediationStep', {
@@ -113,6 +119,15 @@ const spacetimedb = schema({
       aiSummary: t.option(t.string()),
       recommendedAction: t.option(t.string()),
       source: t.string(),
+      // Columns below were added after the first publish. They carry defaults so
+      // SpacetimeDB can auto-migrate existing rows. `findingBases[i]` is the
+      // basis ("confirmed" | "inferred" | "unknown") of `findings[i]`: the
+      // nested Finding type can't gain a field without a breaking migration.
+      riskScore: t.u32().default(0),
+      riskLevel: t.string().default(''),
+      riskFactors: t.array(t.string()).default([]),
+      findingBases: t.array(t.string()).default([]),
+      toolTrace: t.array(toolTraceEntry).default([]),
     }
   ),
 
@@ -260,6 +275,11 @@ export const startInvestigation = spacetimedb.reducer(
       aiSummary: undefined,
       recommendedAction: undefined,
       source,
+      riskScore: 0,
+      riskLevel: '',
+      riskFactors: [],
+      findingBases: [],
+      toolTrace: [],
     });
     ctx.db.auditEvent.insert({
       id: `${id}-started`,
@@ -275,17 +295,43 @@ export const startInvestigation = spacetimedb.reducer(
   }
 );
 
-/** Records the AI provider's result against a previously-started investigation. */
+/** Appends one finding to a running investigation. Called as the agent records each finding. */
+export const recordFinding = spacetimedb.reducer(
+  {
+    investigationId: t.string(),
+    id: t.string(),
+    category: t.string(),
+    severity: t.string(),
+    basis: t.string(),
+    description: t.string(),
+    evidence: t.string(),
+  },
+  (ctx, { investigationId, id, category, severity, basis, description, evidence }) => {
+    const existing = ctx.db.investigation.id.find(investigationId);
+    if (!existing || existing.status !== 'running') return;
+
+    ctx.db.investigation.id.update({
+      ...existing,
+      findings: [...existing.findings, { id, category, severity, description, evidence }],
+      findingBases: [...existing.findingBases, basis],
+    });
+  }
+);
+
+/** Finalizes a running investigation. Findings were already appended via recordFinding. */
 export const completeInvestigation = spacetimedb.reducer(
   {
     investigationId: t.string(),
     completedAt: t.string(),
-    findings: t.array(finding),
     aiSummary: t.string(),
     recommendedAction: t.string(),
+    riskScore: t.u32(),
+    riskLevel: t.string(),
+    riskFactors: t.array(t.string()),
+    toolTrace: t.array(toolTraceEntry),
     actor: t.string(),
   },
-  (ctx, { investigationId, completedAt, findings, aiSummary, recommendedAction, actor }) => {
+  (ctx, { investigationId, completedAt, aiSummary, recommendedAction, riskScore, riskLevel, riskFactors, toolTrace, actor }) => {
     const existing = ctx.db.investigation.id.find(investigationId);
     if (!existing) return;
 
@@ -293,9 +339,12 @@ export const completeInvestigation = spacetimedb.reducer(
       ...existing,
       status: 'completed',
       completedAt,
-      findings,
       aiSummary,
       recommendedAction,
+      riskScore,
+      riskLevel,
+      riskFactors,
+      toolTrace,
     });
     ctx.db.auditEvent.insert({
       id: `${investigationId}-completed`,
@@ -306,7 +355,35 @@ export const completeInvestigation = spacetimedb.reducer(
       identityName: existing.identityName,
       investigationId,
       remediationId: undefined,
-      details: `Investigation completed: recommend ${recommendedAction}.`,
+      details: `Investigation completed with ${existing.findings.length} finding(s), risk ${riskScore} (${riskLevel}): recommend ${recommendedAction}.`,
+    });
+  }
+);
+
+/** Marks a running investigation as failed. Keeps any findings recorded before the failure. */
+export const failInvestigation = spacetimedb.reducer(
+  {
+    investigationId: t.string(),
+    completedAt: t.string(),
+    reason: t.string(),
+    toolTrace: t.array(toolTraceEntry),
+    actor: t.string(),
+  },
+  (ctx, { investigationId, completedAt, reason, toolTrace, actor }) => {
+    const existing = ctx.db.investigation.id.find(investigationId);
+    if (!existing) return;
+
+    ctx.db.investigation.id.update({ ...existing, status: 'failed', completedAt, aiSummary: reason, toolTrace });
+    ctx.db.auditEvent.insert({
+      id: `${investigationId}-failed`,
+      timestamp: completedAt,
+      action: 'investigation-failed',
+      actor,
+      identityId: existing.identityId,
+      identityName: existing.identityName,
+      investigationId,
+      remediationId: undefined,
+      details: `Investigation failed: ${reason}`,
     });
   }
 );

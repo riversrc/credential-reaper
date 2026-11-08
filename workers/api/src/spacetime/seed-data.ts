@@ -108,6 +108,7 @@ export const seedInvestigation = {
       id: 'find-001',
       category: 'ownership',
       severity: 'critical' as const,
+      basis: 'confirmed' as const,
       description: 'No active owner on record.',
       evidence: 'Owner field resolves to a deactivated directory account.',
     },

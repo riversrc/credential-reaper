@@ -1,6 +1,7 @@
 export type AuditAction =
   | 'investigation-started'
   | 'investigation-completed'
+  | 'investigation-failed'
   | 'remediation-proposed'
   | 'remediation-approved'
   | 'remediation-simulated'

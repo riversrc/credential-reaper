@@ -8,3 +8,5 @@ build/
 .DS_Store
 *.log
 .turbo/
+.dev.vars
+.dev.vars.*

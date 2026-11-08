@@ -9,7 +9,11 @@
   },
   // Secrets (set with `wrangler secret put <NAME>`), never committed:
   //   NVIDIA_API_KEY        - NVIDIA Nemotron API key. If unset, the worker
-  //                           falls back to a deterministic mock AI provider.
+  //                           falls back to a scripted mock agent. For local dev
+  //                           put it in workers/api/.dev.vars (gitignored).
+  // Optional var/secret:
+  //   NEMOTRON_MODEL        - overrides the default
+  //                           nvidia/nemotron-3-super-120b-a12b
   //   SPACETIME_AUTH_TOKEN  - optional; only needed once the module requires
   //                           authenticated calls (e.g. on Maincloud). Local
   //                           dev modules are public and work without it.

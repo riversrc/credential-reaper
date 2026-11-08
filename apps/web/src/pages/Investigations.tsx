@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { Investigation, MachineIdentity } from '@credential-reaper/shared';
+import type { FindingBasis, Investigation, MachineIdentity } from '@credential-reaper/shared';
 import { fetchIdentities, fetchInvestigations, startInvestigation } from '../api/client';
 import { RiskBadge, StatusBadge } from '../components/Badges';
+
+const BASIS_TONE: Record<FindingBasis, string> = { confirmed: 'low', inferred: 'medium', unknown: 'neutral' };
 
 const REQUESTED_BY = 'workspace.river@gmail.com';
 
@@ -71,7 +73,7 @@ export function Investigations() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.8rem' }}>
-          The Worker uses a mock AI provider unless NVIDIA_API_KEY is configured. The NVIDIA key is never sent to the browser.
+          The Netrunner agent runs on the Worker with Nemotron when NVIDIA_API_KEY is configured, otherwise with a scripted mock. The NVIDIA key is never sent to the browser.
         </p>
         {startError && (
           <p className="error-state" style={{ padding: '0.5rem 0 0', margin: 0 }}>
@@ -96,10 +98,24 @@ export function Investigations() {
           </p>
 
           {inv.status === 'running' && <p className="muted">Analysis in progress…</p>}
+          {inv.status === 'failed' && inv.aiSummary && <p className="error-state" style={{ padding: 0 }}>{inv.aiSummary}</p>}
 
           {inv.status === 'completed' && (
             <>
-              {inv.aiSummary && <p>{inv.aiSummary}</p>}
+              {inv.aiSummary && <p style={{ whiteSpace: 'pre-line' }}>{inv.aiSummary}</p>}
+              {inv.riskAssessment && (
+                <details style={{ marginBottom: '0.75rem' }}>
+                  <summary>
+                    <span className="muted">Risk score (computed by the backend, not the AI):</span>{' '}
+                    <strong>{inv.riskAssessment.score}/100</strong> <RiskBadge level={inv.riskAssessment.level} />
+                  </summary>
+                  <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
+                    {inv.riskAssessment.factors.map((factor) => (
+                      <li key={factor}>{factor}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
               {inv.recommendedAction && (
                 <p>
                   <span className="muted">Recommended action:</span> <strong>{inv.recommendedAction}</strong>
@@ -111,6 +127,7 @@ export function Investigations() {
                     <tr>
                       <th>Severity</th>
                       <th>Category</th>
+                      <th>Basis</th>
                       <th>Finding</th>
                       <th>Evidence</th>
                     </tr>
@@ -122,6 +139,9 @@ export function Investigations() {
                           <RiskBadge level={f.severity === 'info' ? 'low' : f.severity} />
                         </td>
                         <td className="muted">{f.category}</td>
+                        <td>
+                          <span className={`badge badge-${BASIS_TONE[f.basis]}`}>{f.basis}</span>
+                        </td>
                         <td>{f.description}</td>
                         <td className="mono muted">{f.evidence}</td>
                       </tr>
@@ -130,6 +150,19 @@ export function Investigations() {
                 </table>
               )}
             </>
+          )}
+
+          {inv.toolTrace.length > 0 && (
+            <details style={{ marginTop: '0.75rem' }}>
+              <summary className="muted">Agent tool calls ({inv.toolTrace.length})</summary>
+              <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
+                {inv.toolTrace.map((call) => (
+                  <li key={call.seq}>
+                    {call.seq}. {call.tool} [{call.status}] {call.summary} ({call.durationMs}ms)
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </div>
       ))}
