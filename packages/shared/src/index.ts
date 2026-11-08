@@ -5,3 +5,5 @@ export * from './audit.js';
 export * from './activity.js';
 export * from './nemotron.js';
 export * from './api.js';
+export * from './repository-scan.js';
+export * from './repository-sync.js';

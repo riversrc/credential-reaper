@@ -56,6 +56,12 @@ const machineIdentity = table(
     lastUsedAt: t.option(t.string()),
     tags: t.array(t.string()),
     description: t.string(),
+    // Added with Repository Sync. `dataSource`: 'seeded-demo' | 'repository'. `ownerSource`: 'seeded' |
+    // 'repository' (observed, replaceable by the next scan) | 'curated' (set by a person, never overwritten
+    // by a scan). `repoState`: 'none' | 'present' | 'removed' (declaration no longer in the latest complete scan).
+    dataSource: t.string().default('seeded-demo'),
+    ownerSource: t.string().default('seeded'),
+    repoState: t.string().default('none'),
   }
 );
 
@@ -206,6 +212,50 @@ const securityEvent = table(
   }
 );
 
+// One row per ingestion run of a repository scan (the sync history).
+const repoScan = table(
+  { name: 'repo_scan', indexes: [{ accessor: 'byRepo', algorithm: 'btree', columns: ['repo'] }] },
+  {
+    id: t.string().primaryKey(),
+    repo: t.string(),
+    commitSha: t.option(t.string()),
+    scannedAt: t.string(),
+    ingestedAt: t.string(),
+    status: t.string(),
+    countsJson: t.string(),
+    warningsJson: t.string(),
+    added: t.u32(),
+    changed: t.u32(),
+    unchanged: t.u32(),
+    reappeared: t.u32(),
+    removed: t.u32(),
+    finished: t.bool(),
+    persistedJson: t.string(),
+  }
+);
+
+// Every record a scan declared, one row per (repo, list, key). `payload` and `provenance` are JSON text
+// the Worker validated before sending. Rows are never deleted: a declaration that leaves the repository
+// flips to state 'removed' so the change stays visible.
+const repoRecord = table(
+  { name: 'repo_record', indexes: [{ accessor: 'byRepo', algorithm: 'btree', columns: ['repo'] }] },
+  {
+    id: t.string().primaryKey(),
+    repo: t.string(),
+    list: t.string(),
+    key: t.string(),
+    state: t.string(),
+    contentHash: t.string(),
+    payload: t.string(),
+    provenance: t.string(),
+    projectedId: t.string(),
+    firstSeenScanId: t.string(),
+    lastSeenScanId: t.string(),
+    changedScanId: t.string(),
+    removedScanId: t.option(t.string()),
+  }
+);
+
 // Identities allowed to call reducers and read data. Private, and no reducer writes it: only the
 // database owner can add or remove rows (owner-only SQL DML via the CLI), see spacetime/scripts.
 const authorizedCaller = table(
@@ -228,6 +278,8 @@ const spacetimedb = schema({
   auditEvent,
   investigationEvent,
   securityEvent,
+  repoScan,
+  repoRecord,
   authorizedCaller,
 });
 
@@ -309,7 +361,13 @@ export const seedIdentity = spacetimedb.reducer(
   },
   (ctx, fields) => {
     requireWorker(ctx);
-    ctx.db.machineIdentity.insert({ ...fields, lastUsedAt: fields.lastUsedAt ?? undefined });
+    ctx.db.machineIdentity.insert({
+      ...fields,
+      lastUsedAt: fields.lastUsedAt ?? undefined,
+      dataSource: 'seeded-demo',
+      ownerSource: 'seeded',
+      repoState: 'none',
+    });
   }
 );
 
@@ -375,6 +433,294 @@ export const seedUsageEvent = spacetimedb.reducer(
   (ctx, fields) => {
     requireWorker(ctx);
     ctx.db.usageEvent.insert(fields);
+  }
+);
+
+// ---------------------------------------------------------------------------------------------
+// Repository Sync. The Worker validates a scan, then calls these in order: beginRepoScan,
+// ingestRepoRecords (chunked), syncRepoIdentity (once per declared identity), finishRepoScan.
+// Nothing here reads a clock, invents usage, or retires a credential.
+// ---------------------------------------------------------------------------------------------
+
+const repoRecordInput = t.object('RepoRecordInput', {
+  list: t.string(),
+  key: t.string(),
+  projected: t.string(),
+  hash: t.string(),
+  payload: t.string(),
+  provenance: t.string(),
+});
+
+const repoGrantInput = t.object('RepoGrantInput', {
+  id: t.string(),
+  resource: t.string(),
+  scope: t.string(),
+  grantedAt: t.string(),
+  grantedBy: t.string(),
+});
+
+const repoDependencyInput = t.object('RepoDependencyInput', {
+  id: t.string(),
+  name: t.string(),
+  kind: t.string(),
+  relationship: t.string(),
+});
+
+export const beginRepoScan = spacetimedb.reducer(
+  {
+    id: t.string(),
+    repo: t.string(),
+    commitSha: t.option(t.string()),
+    scannedAt: t.string(),
+    ingestedAt: t.string(),
+    status: t.string(),
+    countsJson: t.string(),
+    warningsJson: t.string(),
+  },
+  (ctx, fields) => {
+    requireWorker(ctx);
+    if (ctx.db.repoScan.id.find(fields.id)) throw new SenderError(`Scan ${fields.id} already exists`);
+    ctx.db.repoScan.insert({
+      ...fields,
+      commitSha: fields.commitSha ?? undefined,
+      added: 0,
+      changed: 0,
+      unchanged: 0,
+      reappeared: 0,
+      removed: 0,
+      finished: false,
+      persistedJson: '{}',
+    });
+  }
+);
+
+/** Idempotent upsert keyed by (repo, list, key). Identical content is counted as unchanged and never duplicated. */
+export const ingestRepoRecords = spacetimedb.reducer(
+  { scanId: t.string(), records: t.array(repoRecordInput) },
+  (ctx, { scanId, records }) => {
+    requireWorker(ctx);
+    const scan = ctx.db.repoScan.id.find(scanId);
+    if (!scan) throw new SenderError(`Unknown scan ${scanId}`);
+    if (scan.finished) throw new SenderError(`Scan ${scanId} is already finished`);
+    let { added, changed, unchanged, reappeared } = scan;
+    for (const r of records) {
+      const id = `${scan.repo}|${r.list}|${r.key}`;
+      const existing = ctx.db.repoRecord.id.find(id);
+      if (!existing) {
+        ctx.db.repoRecord.insert({
+          id,
+          repo: scan.repo,
+          list: r.list,
+          key: r.key,
+          state: 'present',
+          contentHash: r.hash,
+          payload: r.payload,
+          provenance: r.provenance,
+          projectedId: r.projected,
+          firstSeenScanId: scanId,
+          lastSeenScanId: scanId,
+          changedScanId: scanId,
+          removedScanId: undefined,
+        });
+        added++;
+        continue;
+      }
+      const contentChanged = existing.contentHash !== r.hash;
+      const wasRemoved = existing.state === 'removed';
+      if (wasRemoved) reappeared++;
+      else if (contentChanged) changed++;
+      else unchanged++;
+      ctx.db.repoRecord.id.update({
+        ...existing,
+        state: 'present',
+        contentHash: r.hash,
+        payload: r.payload,
+        provenance: r.provenance,
+        projectedId: r.projected,
+        lastSeenScanId: scanId,
+        changedScanId: contentChanged || wasRemoved ? scanId : existing.changedScanId,
+        removedScanId: undefined,
+      });
+    }
+    ctx.db.repoScan.id.update({ ...scan, added, changed, unchanged, reappeared });
+  }
+);
+
+/**
+ * Writes one repository-declared identity and its permissions, dependencies and credential metadata into the
+ * regular inventory tables. Refuses to touch an identity that came from anywhere else. Curated ownership is
+ * kept; a retired status is kept; lastUsedAt is never set. `prune` (complete scans only) drops projected
+ * grants and dependencies this identity no longer declares.
+ */
+export const syncRepoIdentity = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    type: t.string(),
+    owner: t.string(),
+    team: t.string(),
+    environment: t.string(),
+    status: t.string(),
+    riskLevel: t.string(),
+    riskScore: t.u32(),
+    createdAt: t.string(),
+    tags: t.array(t.string()),
+    description: t.string(),
+    grants: t.array(repoGrantInput),
+    dependencies: t.array(repoDependencyInput),
+    prune: t.bool(),
+    hasCredential: t.bool(),
+    credentialId: t.string(),
+    credentialKind: t.string(),
+    storageLocation: t.string(),
+    maskedPreview: t.string(),
+    credentialCreatedAt: t.string(),
+    lastRotatedAt: t.option(t.string()),
+    expiresAt: t.option(t.string()),
+  },
+  (ctx, a) => {
+    requireWorker(ctx);
+    const existing = ctx.db.machineIdentity.id.find(a.id);
+    if (existing && existing.dataSource !== 'repository') {
+      throw new SenderError(`${a.id} already exists as ${existing.dataSource} data and is not overwritten by repository sync`);
+    }
+    const curated = existing?.ownerSource === 'curated';
+    const row = {
+      id: a.id,
+      name: a.name,
+      type: a.type,
+      owner: curated ? existing.owner : a.owner,
+      team: curated ? existing.team : a.team,
+      environment: a.environment,
+      status: existing?.status === 'retired' ? 'retired' : a.status,
+      riskLevel: a.riskLevel,
+      riskScore: a.riskScore,
+      createdAt: a.createdAt,
+      lastUsedAt: existing?.lastUsedAt,
+      tags: a.tags,
+      description: a.description,
+      dataSource: 'repository',
+      ownerSource: curated ? 'curated' : 'repository',
+      repoState: 'present',
+    };
+    if (existing) ctx.db.machineIdentity.id.update(row);
+    else ctx.db.machineIdentity.insert(row);
+
+    for (const g of a.grants) {
+      const grant = { id: g.id, identityId: a.id, resource: g.resource, scope: g.scope, grantedAt: g.grantedAt, grantedBy: g.grantedBy };
+      if (ctx.db.permissionGrant.id.find(g.id)) ctx.db.permissionGrant.id.update(grant);
+      else ctx.db.permissionGrant.insert(grant);
+    }
+    for (const d of a.dependencies) {
+      const dep = { id: d.id, identityId: a.id, name: d.name, kind: d.kind, relationship: d.relationship };
+      if (ctx.db.identityDependency.id.find(d.id)) ctx.db.identityDependency.id.update(dep);
+      else ctx.db.identityDependency.insert(dep);
+    }
+    if (a.prune) {
+      const grantIds = new Set(a.grants.map((g) => g.id));
+      for (const g of [...ctx.db.permissionGrant.byIdentity.filter(a.id)]) {
+        if (g.id.startsWith('rp|') && !grantIds.has(g.id)) ctx.db.permissionGrant.id.delete(g.id);
+      }
+      const depIds = new Set(a.dependencies.map((d) => d.id));
+      for (const d of [...ctx.db.identityDependency.byIdentity.filter(a.id)]) {
+        if (d.id.startsWith('rp|') && !depIds.has(d.id)) ctx.db.identityDependency.id.delete(d.id);
+      }
+    }
+    if (a.hasCredential) {
+      const cred = {
+        id: a.credentialId,
+        identityId: a.id,
+        kind: a.credentialKind,
+        storageLocation: a.storageLocation,
+        maskedPreview: a.maskedPreview,
+        createdAt: a.credentialCreatedAt,
+        lastRotatedAt: a.lastRotatedAt ?? undefined,
+        expiresAt: a.expiresAt ?? undefined,
+      };
+      if (ctx.db.credentialMetadata.id.find(a.credentialId)) ctx.db.credentialMetadata.id.update(cred);
+      else ctx.db.credentialMetadata.insert(cred);
+    }
+  }
+);
+
+/**
+ * Closes a scan. Only a complete scan can mark declarations as removed; a partial scan (some file failed to
+ * parse) must not read absence as removal. Removal flags the record and the identity, drops the projected
+ * grant or dependency row, and leaves the identity itself, its credential metadata and its status alone.
+ */
+export const finishRepoScan = spacetimedb.reducer({ scanId: t.string() }, (ctx, { scanId }) => {
+  requireWorker(ctx);
+  const scan = ctx.db.repoScan.id.find(scanId);
+  if (!scan) throw new SenderError(`Unknown scan ${scanId}`);
+  if (scan.finished) return;
+  const rows = [...ctx.db.repoRecord.byRepo.filter(scan.repo)];
+  let removed = 0;
+  if (scan.status === 'complete') {
+    for (const r of rows) {
+      if (r.state !== 'present' || r.lastSeenScanId === scanId) continue;
+      ctx.db.repoRecord.id.update({ ...r, state: 'removed', removedScanId: scanId });
+      removed++;
+      if (r.list === 'machineIdentities') {
+        const identity = ctx.db.machineIdentity.id.find(r.key);
+        if (identity && identity.dataSource === 'repository') ctx.db.machineIdentity.id.update({ ...identity, repoState: 'removed' });
+      } else if (r.projectedId && r.list === 'assignments') {
+        ctx.db.permissionGrant.id.delete(r.projectedId);
+      }
+    }
+  }
+  const persisted: Record<string, number> = {};
+  for (const r of ctx.db.repoRecord.byRepo.filter(scan.repo)) {
+    const k = `${r.list}:${r.state}`;
+    persisted[k] = (persisted[k] ?? 0) + 1;
+  }
+  ctx.db.repoScan.id.update({ ...scan, removed, finished: true, persistedJson: JSON.stringify(persisted) });
+});
+
+/**
+ * Records a person's decision on who owns an identity. 'curated' pins it: scans keep updating the observed
+ * declaration (repoRecord) but never replace this value. 'repository' hands ownership back to the scan.
+ */
+export const setIdentityOwnership = spacetimedb.reducer(
+  {
+    identityId: t.string(),
+    owner: t.string(),
+    team: t.string(),
+    ownerSource: t.string(),
+    status: t.string(),
+    riskLevel: t.string(),
+    riskScore: t.u32(),
+    actor: t.string(),
+    timestamp: t.string(),
+    auditId: t.string(),
+    details: t.string(),
+  },
+  (ctx, a) => {
+    requireWorker(ctx);
+    const existing = ctx.db.machineIdentity.id.find(a.identityId);
+    if (!existing) throw new SenderError(`Unknown identity ${a.identityId}`);
+    if (a.ownerSource !== 'curated' && a.ownerSource !== 'repository') throw new SenderError('ownerSource must be curated or repository');
+    ctx.db.machineIdentity.id.update({
+      ...existing,
+      owner: a.owner,
+      team: a.team,
+      ownerSource: a.ownerSource,
+      status: existing.status === 'retired' ? 'retired' : a.status,
+      riskLevel: a.riskLevel,
+      riskScore: a.riskScore,
+    });
+    if (!ctx.db.auditEvent.id.find(a.auditId)) {
+      ctx.db.auditEvent.insert({
+        id: a.auditId,
+        timestamp: a.timestamp,
+        action: 'ownership-curated',
+        actor: a.actor,
+        identityId: existing.id,
+        identityName: existing.name,
+        investigationId: undefined,
+        remediationId: undefined,
+        details: a.details,
+      });
+    }
   }
 );
 
@@ -849,4 +1195,16 @@ export const vSecurityEvent = spacetimedb.view(
   { name: 'v_security_event', public: true },
   t.array(securityEvent.rowType),
   (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.securityEvent.iter()) : [])
+);
+
+export const vRepoScan = spacetimedb.view(
+  { name: 'v_repo_scan', public: true },
+  t.array(repoScan.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.repoScan.iter()) : [])
+);
+
+export const vRepoRecord = spacetimedb.view(
+  { name: 'v_repo_record', public: true },
+  t.array(repoRecord.rowType),
+  (ctx) => (isAuthorized(ctx) ? Array.from(ctx.db.repoRecord.iter()) : [])
 );

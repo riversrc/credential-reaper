@@ -22,7 +22,7 @@ if (db === 'credential-reaper' && process.env.ALLOW_MAIN_DB !== '1') {
 }
 const auth: Record<string, string> = mode === 'token' ? { Authorization: `Bearer ${readFileSync(tokenFile!, 'utf8').trim()}` } : {};
 
-const TABLES = ['machine_identity', 'permission_grant', 'identity_dependency', 'credential_metadata', 'usage_event', 'investigation', 'remediation_plan', 'audit_event', 'investigation_event', 'security_event', 'authorized_caller'];
+const TABLES = ['machine_identity', 'permission_grant', 'identity_dependency', 'credential_metadata', 'usage_event', 'investigation', 'remediation_plan', 'audit_event', 'investigation_event', 'security_event', 'repo_scan', 'repo_record', 'authorized_caller'];
 const VIEWS = TABLES.filter((t) => t !== 'authorized_caller').map((t) => `v_${t}`);
 
 const MARK = 'verify-access-probe';
@@ -43,6 +43,15 @@ const REDUCER_ARGS: Record<string, unknown> = {
   approve_remediation: { planId: s, decidedAt: s, actor: s },
   reject_remediation: { planId: s, decidedAt: s, actor: s },
   simulate_remediation: { planId: s, simulatedAt: s, actor: s },
+  begin_repo_scan: { id: s, repo: s, commitSha: { none: {} }, scannedAt: s, ingestedAt: s, status: s, countsJson: '{}', warningsJson: '[]' },
+  ingest_repo_records: { scanId: s, records: [{ list: s, key: s, projected: s, hash: s, payload: '{}', provenance: '{}' }] },
+  sync_repo_identity: {
+    id: s, name: s, type: 'api-key', owner: s, team: s, environment: 'dev', status: 'active', riskLevel: 'low', riskScore: 0, createdAt: s,
+    tags: [], description: s, grants: [], dependencies: [], prune: false, hasCredential: false, credentialId: s, credentialKind: s,
+    storageLocation: s, maskedPreview: s, credentialCreatedAt: s, lastRotatedAt: { none: {} }, expiresAt: { none: {} },
+  },
+  finish_repo_scan: { scanId: s },
+  set_identity_ownership: { identityId: s, owner: s, team: s, ownerSource: 'curated', status: 'active', riskLevel: 'low', riskScore: 0, actor: s, timestamp: s, auditId: s, details: s },
   record_investigation_event: { investigationId: s, timestamp: s, eventType: s, stage: s, toolName: { none: {} }, status: s, message: s, details: s },
 };
 

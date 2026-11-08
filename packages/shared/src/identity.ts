@@ -11,6 +11,15 @@ export type RiskLevel = 'critical' | 'high' | 'medium' | 'low';
 
 export type IdentityStatus = 'active' | 'stale' | 'orphaned' | 'retired';
 
+/** Where an identity row came from. Repository identities carry provenance; seeded demo ones do not. */
+export type IdentityDataSource = 'seeded-demo' | 'repository';
+
+/** `curated` ownership was set by a person and is never replaced by a repository scan. */
+export type OwnerSource = 'seeded' | 'repository' | 'curated';
+
+/** `removed`: the declaration is no longer in the latest complete scan. The identity itself is untouched. */
+export type RepoState = 'none' | 'present' | 'removed';
+
 export interface MachineIdentity {
   id: string;
   name: string;
@@ -22,9 +31,12 @@ export interface MachineIdentity {
   riskLevel: RiskLevel;
   riskScore: number; // 0-100
   createdAt: string; // ISO 8601
-  lastUsedAt: string | null; // ISO 8601, null if never observed
+  lastUsedAt: string | null; // ISO 8601, null if no usage has been observed (repository identities: always unknown)
   tags: string[];
   description: string;
+  dataSource: IdentityDataSource;
+  ownerSource: OwnerSource;
+  repoState: RepoState;
 }
 
 export interface PermissionGrant {
@@ -48,7 +60,7 @@ export interface IdentityDependency {
 export interface CredentialMetadata {
   id: string;
   identityId: string;
-  kind: 'api-key' | 'password' | 'certificate' | 'oauth-token' | 'ssh-key';
+  kind: 'api-key' | 'password' | 'certificate' | 'oauth-token' | 'ssh-key' | 'secret-reference';
   storageLocation: string;
   maskedPreview: string; // e.g. "sk-live-****ab12"
   createdAt: string;

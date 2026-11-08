@@ -43,7 +43,7 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: ^6.1.2
-        version: 6.2.1(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2))
+        version: 6.2.1(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))
       oxlint:
         specifier: ^1.90.0
         version: 1.92.0
@@ -52,7 +52,7 @@ importers:
         version: 7.0.2
       vite:
         specifier: ^8.3.6
-        version: 8.3.6(@types/node@24.19.2)(esbuild@0.28.2)
+        version: 8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1)
 
   packages/shared:
     devDependencies:
@@ -75,6 +75,9 @@ importers:
       '@credential-reaper/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20261107.1
@@ -1230,6 +1233,11 @@ packages:
       utf-8-validate:
         optional: true
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   youch-core@0.3.3:
     resolution: {integrity: sha512-ho7XuGjLaJ2hWHoK8yFnsUGy2Y5uDpqSTq1FkHLK4/oqKtyUU1AFbOOxY4IpC9f0fTLjwYbslUz0Po5BpD1wrA==}
 
@@ -1665,10 +1673,10 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@vitejs/plugin-react@6.2.1(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2))':
+  '@vitejs/plugin-react@6.2.1(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.3.6(@types/node@24.19.2)(esbuild@0.28.2)
+      vite: 8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1)
 
   base64-js@1.5.1: {}
 
@@ -1973,7 +1981,7 @@ snapshots:
 
   url-polyfill@1.1.14: {}
 
-  vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2):
+  vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -1984,6 +1992,7 @@ snapshots:
       '@types/node': 24.19.2
       esbuild: 0.28.2
       fsevents: 2.3.3
+      yaml: 2.9.1
 
   workerd@1.20261104.1:
     optionalDependencies:
@@ -2013,6 +2022,8 @@ snapshots:
       - utf-8-validate
 
   ws@8.21.0: {}
+
+  yaml@2.9.1: {}
 
   youch-core@0.3.3:
     dependencies:

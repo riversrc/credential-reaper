@@ -1,9 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { MachineIdentity } from '@credential-reaper/shared';
 import { RiskBadge, StatusBadge } from './Badges';
+import { SourceTag, lastUsedLabel } from './SourceTag';
 
-function formatDate(iso: string | null) {
-  if (!iso) return 'never';
+function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
@@ -39,12 +39,13 @@ export function IdentityTable({ identities, dimIds }: { identities: MachineIdent
                 <td>
                   <Link to={`/identities/${identity.id}`} onClick={(e) => e.stopPropagation()}>
                     <strong>{identity.name}</strong>
-                  </Link>
+                  </Link>{' '}
+                  <SourceTag identity={identity} />
                 </td>
                 <td className="muted">{identity.type}</td>
                 <td>{identity.owner}</td>
                 <td className="muted">{identity.team}</td>
-                <td className="muted">{formatDate(identity.lastUsedAt)}</td>
+                <td className="muted">{lastUsedLabel(identity, formatDate)}</td>
                 <td>
                   <StatusBadge status={identity.status} />
                 </td>

@@ -28,7 +28,7 @@ Built in phases; see git history for what landed at each step.
 - ✅ Frontend ↔ Worker: real HTTP calls, configurable via `VITE_API_BASE_URL`.
 - ✅ Worker ↔ SpacetimeDB: real HTTP calls (SQL reads + reducer writes), replacing the old in-memory data store. Data persists across Worker restarts.
 - ✅ Netrunner agent: Nemotron tool-calling loop (or a scripted mock without a key) investigates through validated backend tools against SpacetimeDB; findings are labeled confirmed / inferred / unknown, risk is computed deterministically, remediation stays proposed for human approval.
-- ⬜ Live verification of the Nemotron path with a real `NVIDIA_API_KEY` (tested only against a fake endpoint so far).
+- ✅ Live verification of the Nemotron path with a real `NVIDIA_API_KEY`: a real investigation completed with `source: nemotron`, self-directed tool calls, and a proposed remediation plan.
 
 ## Prerequisites
 
@@ -54,7 +54,7 @@ spacetime start --non-interactive
 
 # 3. Publish the module (re-run this whenever spacetime/module/src/index.ts changes)
 cd spacetime/module
-spacetime publish --server local --module-path . -y credential-reaper
+spacetime publish --server local --module-path . -y <fresh-db-name>   # NOT the existing `credential-reaper` (hardened module gets 403 there)
 cd ../..
 
 # 4. Run the Worker (reads SPACETIME_URL/SPACETIME_DB_NAME from wrangler.jsonc, matching the above)
@@ -73,7 +73,7 @@ Without a key the Worker uses the scripted mock. To use Nemotron, give the Worke
 ```bash
 # local dev: copy the template, then fill in the key (workers/api/.dev.vars is gitignored)
 cp workers/api/.dev.vars.example workers/api/.dev.vars
-# set NVIDIA_API_KEY=nvapi-...   (optional: NEMOTRON_MODEL, defaults to nvidia/nemotron-3-super-120b-a12b)
+# set NVIDIA_API_KEY=nvapi-...   (optional: NEMOTRON_MODEL, defaults to nvidia/nemotron-3.5-super-vl-120b-a12b)
 
 # deployed: wrangler secret put NVIDIA_API_KEY
 ```
@@ -107,6 +107,42 @@ wrangler secret put NVIDIA_API_KEY
 The key is only ever read server-side in the Worker and is never sent to the
 browser.
 
+## Repository Sync (local)
+
+Pipeline: Arasaka repository -> scanner -> Worker ingestion -> SpacetimeDB -> The Grid.
+It reads declarations from the repository only. It never invents usage, last-used
+times, deployment state or telemetry, never overwrites manually curated ownership,
+and never retires a credential (a declaration that disappears is flagged
+"Removed from repo", nothing more).
+
+```bash
+# 1. Scan the Arasaka repo (branch `demo`) to JSON, no network or database needed
+cd workers/api
+node scripts/scan-repo.ts /home/riversrc/credential-reaper-demo-app --out /tmp/scn/scan.json
+
+# 2. Ingest it into a running Worker (idempotent: re-running adds nothing)
+node scripts/ingest-scan.ts /tmp/scn/scan.json --api http://localhost:8787
+
+# 3. Open The Grid; repository identities carry a REPO tag, seeded ones a DEMO tag
+```
+
+Endpoints: `POST /api/repository/scans` (validates, then persists; 400
+`invalid_scan` on malformed or unsupported data), `GET /api/repository/scans`
+(scan history), `POST /api/identities/:id/ownership` (set a curated owner, or
+`{"revert":true}` to follow the repository again). Identity details include a
+`repository` block with the commit SHA, source paths, evidence types and confidence.
+
+Tests: `cd workers/api && pnpm test:scan` (scanner, no services needed) and
+`INGEST_TEST_API=http://localhost:8787 pnpm test:ingest` (end to end against a
+running Worker + SpacetimeDB; it writes to that database, so point it at a
+test/sync database).
+
+Caveats: an ingest makes roughly 60 reducer calls, which is fine locally but
+exceeds the Cloudflare free-plan subrequest limit when deployed. For repository
+identities, status `active` means "not flagged by repository ownership data", not
+a runtime state. The ownership control accepts an unauthenticated, client-supplied
+actor, in line with the no-auth note below.
+
 ## SpacetimeDB module
 
 `spacetime/module/src/index.ts` defines the tables (machine identities,
@@ -114,7 +150,10 @@ permissions, dependencies, credentials metadata, usage events,
 investigations, remediation plans, audit events) and reducers
 (`startInvestigation`, `completeInvestigation`, `proposeRemediation`,
 `simulateRemediation`, plus 5 `seed*` reducers used only for bootstrapping)
-that back the Worker API. Useful commands once a local instance is running:
+that back the Worker API, plus the Repository Sync tables (`repo_scan`,
+`repo_record`) and reducers (`beginRepoScan`, `ingestRepoRecords`,
+`syncRepoIdentity`, `finishRepoScan`, `setIdentityOwnership`) — 12 tables and
+19 reducers in total (including a few not listed here that predate Repository Sync). Useful commands once a local instance is running:
 
 ```bash
 spacetime describe --server local credential-reaper

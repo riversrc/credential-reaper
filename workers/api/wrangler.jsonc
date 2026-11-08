@@ -13,7 +13,7 @@
   //                           put it in workers/api/.dev.vars (gitignored).
   // Optional var/secret:
   //   NEMOTRON_MODEL        - overrides the default
-  //                           nvidia/nemotron-3-super-120b-a12b
+  //                           nvidia/nemotron-3.5-super-vl-120b-a12b
   // Required secret:
   //   SPACETIME_AUTH_TOKEN  - token of the Worker's service identity, registered
   //                           in the module's private `authorized_caller` table

@@ -57,7 +57,10 @@ export function computeRisk(input: RiskInput, now: Date = new Date()): RiskResul
   else if (isExternalOwner(identity)) add(10, `owner is external or a contractor (owner = "${identity.owner}")`);
 
   const idleDays = daysSince(lastActivityAt(identity, usageHistory), now);
-  if (idleDays === null) add(25, 'no usage ever observed');
+  // A repository scan carries no runtime evidence, so absent usage is unknown rather than evidence of dormancy.
+  const usageUnknown = idleDays === null && identity.dataSource === 'repository';
+  if (usageUnknown) factors.push('+0 usage unknown: repository scans carry no runtime evidence');
+  else if (idleDays === null) add(25, 'no usage ever observed');
   else if (idleDays > 365) add(25, `dormant for ${idleDays} days (over 365)`);
   else if (idleDays > 180) add(18, `dormant for ${idleDays} days (over 180)`);
   else if (idleDays > 90) add(10, `dormant for ${idleDays} days (over 90)`);
@@ -84,7 +87,7 @@ export function computeRisk(input: RiskInput, now: Date = new Date()): RiskResul
   score = Math.min(100, score);
   const level: RiskAssessment['level'] = score >= 80 ? 'critical' : score >= 60 ? 'high' : score >= 35 ? 'medium' : 'low';
 
-  const dormant = idleDays === null || idleDays > 180;
+  const dormant = idleDays === null ? !usageUnknown : idleDays > 180;
   let suggestedAction: RiskResult['suggestedAction'];
   if (dormant && (unowned || score >= 60)) suggestedAction = 'retire';
   else if (unowned) suggestedAction = 'migrate';

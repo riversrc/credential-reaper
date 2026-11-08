@@ -52,7 +52,9 @@ export const mockNemotronProvider: NemotronProvider = {
     }
 
     const idle: number | null = usage.daysIdle;
-    if (idle === null) {
+    if (idle === null && usage.runtimeEvidenceAvailable === false) {
+      await record('dormancy', 'low', 'unknown', 'Usage cannot be assessed: this identity is known only from repository declarations and no runtime data is collected.', `runtimeEvidenceAvailable = false`, ['get_usage_history']);
+    } else if (idle === null) {
       await record('dormancy', 'high', 'confirmed', 'No usage has ever been recorded for this identity.', `totalEventsRecorded = ${usage.totalEventsRecorded}`, ['get_usage_history']);
     } else if (idle > 90) {
       await record('dormancy', idle > 180 ? 'high' : 'medium', 'confirmed', `No recorded use for ${idle} days.`, `lastActivityAt = ${usage.lastActivityAt}`, ['get_usage_history']);

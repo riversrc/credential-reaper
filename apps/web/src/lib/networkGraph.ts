@@ -226,6 +226,8 @@ export function stateAt(
     const at = retiredAt ?? (identity.lastUsedAt ? Date.parse(identity.lastUsedAt) : created);
     if (t >= at) return 'retired';
   }
+  // Repository identities have no usage evidence, so absence of use says nothing about staleness.
+  if (identity.dataSource === 'repository') return 'active';
   let lastUse = created;
   const candidates = [identity.lastUsedAt, ...(detail?.usageHistory.map((u) => u.timestamp) ?? [])];
   for (const c of candidates) {
