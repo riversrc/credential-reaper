@@ -150,6 +150,93 @@ const spacetimedb = schema({
 
 export default spacetimedb;
 
+// Seed reducers: the only way to write rows into the five "static inventory"
+// tables, since nothing in the app creates/edits machine identities today.
+// The Worker calls these once (if the tables are empty) to bootstrap data
+// that previously lived in workers/api/src/data.ts.
+
+export const seedIdentity = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    type: t.string(),
+    owner: t.string(),
+    team: t.string(),
+    environment: t.string(),
+    status: t.string(),
+    riskLevel: t.string(),
+    riskScore: t.u32(),
+    createdAt: t.string(),
+    lastUsedAt: t.option(t.string()),
+    tags: t.array(t.string()),
+    description: t.string(),
+  },
+  (ctx, fields) => {
+    ctx.db.machineIdentity.insert({ ...fields, lastUsedAt: fields.lastUsedAt ?? undefined });
+  }
+);
+
+export const seedPermission = spacetimedb.reducer(
+  {
+    id: t.string(),
+    identityId: t.string(),
+    resource: t.string(),
+    scope: t.string(),
+    grantedAt: t.string(),
+    grantedBy: t.string(),
+  },
+  (ctx, fields) => {
+    ctx.db.permissionGrant.insert(fields);
+  }
+);
+
+export const seedDependency = spacetimedb.reducer(
+  {
+    id: t.string(),
+    identityId: t.string(),
+    name: t.string(),
+    kind: t.string(),
+    relationship: t.string(),
+  },
+  (ctx, fields) => {
+    ctx.db.identityDependency.insert(fields);
+  }
+);
+
+export const seedCredential = spacetimedb.reducer(
+  {
+    id: t.string(),
+    identityId: t.string(),
+    kind: t.string(),
+    storageLocation: t.string(),
+    maskedPreview: t.string(),
+    createdAt: t.string(),
+    lastRotatedAt: t.option(t.string()),
+    expiresAt: t.option(t.string()),
+  },
+  (ctx, fields) => {
+    ctx.db.credentialMetadata.insert({
+      ...fields,
+      lastRotatedAt: fields.lastRotatedAt ?? undefined,
+      expiresAt: fields.expiresAt ?? undefined,
+    });
+  }
+);
+
+export const seedUsageEvent = spacetimedb.reducer(
+  {
+    id: t.string(),
+    identityId: t.string(),
+    timestamp: t.string(),
+    action: t.string(),
+    source: t.string(),
+    result: t.string(),
+  },
+  (ctx, fields) => {
+    ctx.db.usageEvent.insert(fields);
+  }
+);
+
 /** Creates an investigation row in "running" status. The caller (Worker) supplies the id. */
 export const startInvestigation = spacetimedb.reducer(
   {

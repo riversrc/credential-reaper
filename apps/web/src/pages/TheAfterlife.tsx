@@ -24,9 +24,12 @@ const actionLabels: Record<AuditEvent['action'], string> = {
 
 export function TheAfterlife() {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAuditEvents().then(setEvents);
+    fetchAuditEvents()
+      .then(setEvents)
+      .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
   return (
@@ -36,8 +39,9 @@ export function TheAfterlife() {
         <p>Investigation history and audit trail — every action taken against a machine identity.</p>
       </div>
 
-      {!events && <div className="empty-state">Loading audit history…</div>}
-      {events && events.length === 0 && <div className="empty-state">No audit events yet.</div>}
+      {error && <div className="error-state">{error}</div>}
+      {!error && !events && <div className="empty-state">Loading audit history…</div>}
+      {!error && events && events.length === 0 && <div className="empty-state">No audit events yet.</div>}
 
       {events && events.length > 0 && (
         <div className="card">

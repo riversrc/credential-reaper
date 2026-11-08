@@ -29,7 +29,7 @@ export function IdentityDetails() {
     fetchIdentityDetail(id).then(setData).catch((e) => setError(String(e.message ?? e)));
   }, [id]);
 
-  if (error) return <div className="empty-state">{error}</div>;
+  if (error) return <div className="error-state">{error}</div>;
   if (!data) return <div className="empty-state">Loading identity…</div>;
 
   const { identity, permissions, dependencies, credentials, usageHistory } = data;

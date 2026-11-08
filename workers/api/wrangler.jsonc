@@ -7,10 +7,18 @@
   "observability": {
     "enabled": true
   },
-  // Secrets (set with `wrangler secret put NVIDIA_API_KEY`), never committed:
-  //   NVIDIA_API_KEY - NVIDIA Nemotron API key. If unset, the worker falls
-  //   back to a deterministic mock AI provider automatically.
+  // Secrets (set with `wrangler secret put <NAME>`), never committed:
+  //   NVIDIA_API_KEY        - NVIDIA Nemotron API key. If unset, the worker
+  //                           falls back to a deterministic mock AI provider.
+  //   SPACETIME_AUTH_TOKEN  - optional; only needed once the module requires
+  //                           authenticated calls (e.g. on Maincloud). Local
+  //                           dev modules are public and work without it.
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    // Requires a running SpacetimeDB instance — see CLAUDE.md "Database
+    // Guidelines" for the exact `spacetime start` / `spacetime publish`
+    // commands. These defaults match a local `spacetime start` instance.
+    "SPACETIME_URL": "http://localhost:3000",
+    "SPACETIME_DB_NAME": "credential-reaper"
   }
 }

@@ -263,6 +263,12 @@ input {
   text-align: center;
 }
 
+.error-state {
+  color: var(--critical);
+  padding: 2rem 0;
+  text-align: center;
+}
+
 .back-link {
   display: inline-block;
   margin-bottom: 0.75rem;

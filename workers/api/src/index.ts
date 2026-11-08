@@ -1,8 +1,21 @@
-import type { ApiError, AuditAction, Investigation, RemediationPlan, StartInvestigationRequest } from '@credential-reaper/shared';
-import { auditEvents, credentials, dependencies, identities, investigations, permissions, remediationPlans, usageHistory } from './data.js';
+import type { ApiError, Investigation, StartInvestigationRequest } from '@credential-reaper/shared';
 import { getAiProvider, type AiProviderEnv } from './providers/index.js';
+import type { SpacetimeEnv } from './spacetime/client.js';
+import {
+  completeInvestigationRow,
+  ensureSeeded,
+  fetchAuditEvents,
+  fetchIdentities,
+  fetchIdentityDetail,
+  fetchInvestigation,
+  fetchInvestigations,
+  fetchRemediationPlan,
+  fetchRemediationPlans,
+  simulateRemediationRow,
+  startInvestigationRow,
+} from './spacetime/repository.js';
 
-export interface Env extends AiProviderEnv {}
+export interface Env extends AiProviderEnv, SpacetimeEnv {}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -21,19 +34,8 @@ function notFound(message: string): Response {
   return json({ error: 'not_found', message } satisfies ApiError, { status: 404 });
 }
 
-function pushAudit(action: AuditAction, actor: string, fields: Partial<(typeof auditEvents)[number]>) {
-  auditEvents.unshift({
-    id: crypto.randomUUID(),
-    timestamp: new Date().toISOString(),
-    action,
-    actor,
-    identityId: null,
-    identityName: null,
-    investigationId: null,
-    remediationId: null,
-    details: '',
-    ...fields,
-  });
+function badGateway(message: string): Response {
+  return json({ error: 'spacetimedb_unavailable', message } satisfies ApiError, { status: 502 });
 }
 
 export default {
@@ -46,53 +48,43 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
+    try {
+      await ensureSeeded(env);
+    } catch (e) {
+      return badGateway(`Could not reach SpacetimeDB at ${env.SPACETIME_URL}: ${(e as Error).message}`);
+    }
+
     if (pathname === '/api/identities' && method === 'GET') {
-      return json(identities);
+      return json(await fetchIdentities(env));
     }
 
     const identityMatch = pathname.match(/^\/api\/identities\/([^/]+)$/);
     if (identityMatch && method === 'GET') {
-      const identity = identities.find((i) => i.id === identityMatch[1]);
-      if (!identity) return notFound(`Identity ${identityMatch[1]} not found`);
-      return json({
-        identity,
-        permissions: permissions.filter((p) => p.identityId === identity.id),
-        dependencies: dependencies.filter((d) => d.identityId === identity.id),
-        credentials: credentials.filter((c) => c.identityId === identity.id),
-        usageHistory: usageHistory.filter((u) => u.identityId === identity.id),
-      });
+      const detail = await fetchIdentityDetail(env, identityMatch[1]!);
+      if (!detail) return notFound(`Identity ${identityMatch[1]} not found`);
+      return json(detail);
     }
 
     if (pathname === '/api/investigations' && method === 'GET') {
-      return json([...investigations].sort((a, b) => b.startedAt.localeCompare(a.startedAt)));
+      return json(await fetchInvestigations(env));
     }
 
     if (pathname === '/api/investigations' && method === 'POST') {
       const body = (await request.json()) as StartInvestigationRequest;
-      const identity = identities.find((i) => i.id === body.identityId);
-      if (!identity) return notFound(`Identity ${body.identityId} not found`);
+      const detail = await fetchIdentityDetail(env, body.identityId);
+      if (!detail) return notFound(`Identity ${body.identityId} not found`);
+      const { identity } = detail;
 
       const provider = getAiProvider(env);
+      const id = crypto.randomUUID();
       const startedAt = new Date().toISOString();
-      const investigation: Investigation = {
-        id: crypto.randomUUID(),
+      await startInvestigationRow(env, {
+        id,
         identityId: identity.id,
         identityName: identity.name,
-        status: 'running',
-        startedAt,
-        completedAt: null,
         requestedBy: body.requestedBy,
-        findings: [],
-        aiSummary: null,
-        recommendedAction: null,
+        startedAt,
         source: provider.name,
-      };
-      investigations.unshift(investigation);
-      pushAudit('investigation-started', body.requestedBy, {
-        identityId: identity.id,
-        identityName: identity.name,
-        investigationId: investigation.id,
-        details: `Investigation started for ${identity.name}.`,
       });
 
       const result = await provider.investigate({
@@ -101,56 +93,63 @@ export default {
         owner: identity.owner,
         environment: identity.environment,
         lastUsedAt: identity.lastUsedAt,
-        permissionsSummary: permissions.filter((p) => p.identityId === identity.id).map((p) => `${p.resource}:${p.scope}`),
-        dependenciesSummary: dependencies.filter((d) => d.identityId === identity.id).map((d) => d.name),
-        recentUsageSummary: usageHistory.filter((u) => u.identityId === identity.id).map((u) => u.action),
+        permissionsSummary: detail.permissions.map((p) => `${p.resource}:${p.scope}`),
+        dependenciesSummary: detail.dependencies.map((d) => d.name),
+        recentUsageSummary: detail.usageHistory.map((u) => u.action),
       });
 
-      investigation.status = 'completed';
-      investigation.completedAt = new Date().toISOString();
-      investigation.findings = result.findings;
-      investigation.aiSummary = result.summary;
-      investigation.recommendedAction = result.recommendedAction === 'no-action' ? 'no-action' : result.recommendedAction;
+      const completedAt = new Date().toISOString();
+      const recommendedAction = result.recommendedAction;
+      await completeInvestigationRow(env, {
+        investigationId: id,
+        completedAt,
+        findings: result.findings,
+        aiSummary: result.summary,
+        recommendedAction,
+        actor: provider.name === 'nemotron' ? 'nemotron-ai' : 'nemotron-ai (mock)',
+      });
 
-      pushAudit('investigation-completed', provider.name === 'nemotron' ? 'nemotron-ai' : 'nemotron-ai (mock)', {
+      const investigation: Investigation = {
+        id,
         identityId: identity.id,
         identityName: identity.name,
-        investigationId: investigation.id,
-        details: `Investigation completed: recommend ${investigation.recommendedAction}.`,
-      });
-
+        status: 'completed',
+        startedAt,
+        completedAt,
+        requestedBy: body.requestedBy,
+        findings: result.findings,
+        aiSummary: result.summary,
+        recommendedAction,
+        source: provider.name,
+      };
       return json(investigation, { status: 201 });
     }
 
     const investigationMatch = pathname.match(/^\/api\/investigations\/([^/]+)$/);
     if (investigationMatch && method === 'GET') {
-      const investigation = investigations.find((i) => i.id === investigationMatch[1]);
+      const investigation = await fetchInvestigation(env, investigationMatch[1]!);
       if (!investigation) return notFound(`Investigation ${investigationMatch[1]} not found`);
       return json(investigation);
     }
 
     if (pathname === '/api/audit-events' && method === 'GET') {
-      return json([...auditEvents].sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+      return json(await fetchAuditEvents(env));
     }
 
     if (pathname === '/api/remediation-plans' && method === 'GET') {
-      return json(remediationPlans);
+      return json(await fetchRemediationPlans(env));
     }
 
     const simulateMatch = pathname.match(/^\/api\/remediation-plans\/([^/]+)\/simulate$/);
     if (simulateMatch && method === 'POST') {
-      const plan: RemediationPlan | undefined = remediationPlans.find((p) => p.id === simulateMatch[1]);
-      if (!plan) return notFound(`Remediation plan ${simulateMatch[1]} not found`);
-      plan.status = 'simulated';
-      plan.simulatedAt = new Date().toISOString();
-      pushAudit('remediation-simulated', 'workspace.river@gmail.com', {
-        identityId: plan.identityId,
-        identityName: plan.identityName,
-        investigationId: plan.investigationId,
-        remediationId: plan.id,
-        details: `Dry-run simulation completed for "${plan.action}" plan. No live credential was touched.`,
-      });
-      return json(plan);
+      const planId = simulateMatch[1]!;
+      const plan = await fetchRemediationPlan(env, planId);
+      if (!plan) return notFound(`Remediation plan ${planId} not found`);
+
+      const simulatedAt = new Date().toISOString();
+      await simulateRemediationRow(env, planId, simulatedAt, 'workspace.river@gmail.com');
+
+      return json({ ...plan, status: 'simulated', simulatedAt });
     }
 
     return notFound(`No route for ${method} ${pathname}`);

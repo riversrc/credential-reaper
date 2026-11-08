@@ -11,10 +11,13 @@ function formatDate(iso: string | null) {
 
 export function TheGrid() {
   const [identities, setIdentities] = useState<MachineIdentity[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchIdentities().then(setIdentities);
+    fetchIdentities()
+      .then(setIdentities)
+      .catch((e) => setError(String(e.message ?? e)));
   }, []);
 
   return (
@@ -24,9 +27,11 @@ export function TheGrid() {
         <p>Machine identity inventory — every service account, key, cert, and bot we know about.</p>
       </div>
 
-      {!identities && <div className="empty-state">Loading identities…</div>}
+      {error && <div className="error-state">{error}</div>}
+      {!error && !identities && <div className="empty-state">Loading identities…</div>}
+      {!error && identities && identities.length === 0 && <div className="empty-state">No machine identities on record.</div>}
 
-      {identities && (
+      {identities && identities.length > 0 && (
         <div className="card" style={{ padding: 0 }}>
           <table>
             <thead>

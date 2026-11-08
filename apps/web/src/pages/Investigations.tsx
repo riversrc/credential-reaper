@@ -12,29 +12,41 @@ function formatDateTime(iso: string | null) {
 
 export function Investigations() {
   const [identities, setIdentities] = useState<MachineIdentity[]>([]);
-  const [investigations, setInvestigations] = useState<Investigation[]>([]);
+  const [investigations, setInvestigations] = useState<Investigation[] | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [starting, setStarting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchIdentities().then((list) => {
-      setIdentities(list);
-      setSelectedId(list[0]?.id ?? '');
-    });
-    fetchInvestigations().then(setInvestigations);
+    fetchIdentities()
+      .then((list) => {
+        setIdentities(list);
+        setSelectedId(list[0]?.id ?? '');
+      })
+      .catch((e) => setLoadError(String(e.message ?? e)));
+    fetchInvestigations()
+      .then(setInvestigations)
+      .catch((e) => setLoadError(String(e.message ?? e)));
   }, []);
 
   async function handleStart() {
     if (!selectedId) return;
     setStarting(true);
-    // startInvestigation records a "running" entry synchronously, then
-    // resolves once the (mock) analysis completes. Refresh right away so the
-    // "running" state is visible, then again once it settles.
-    const pending = startInvestigation(selectedId, REQUESTED_BY);
-    setInvestigations(await fetchInvestigations());
-    await pending;
-    setInvestigations(await fetchInvestigations());
-    setStarting(false);
+    setStartError(null);
+    try {
+      // startInvestigation resolves once the Worker has run the full
+      // investigate-and-complete cycle. Refresh right away in case a
+      // "running" entry is briefly visible, then again once it settles.
+      const pending = startInvestigation(selectedId, REQUESTED_BY);
+      setInvestigations(await fetchInvestigations());
+      await pending;
+      setInvestigations(await fetchInvestigations());
+    } catch (e) {
+      setStartError(String((e as Error).message ?? e));
+    } finally {
+      setStarting(false);
+    }
   }
 
   return (
@@ -59,13 +71,20 @@ export function Investigations() {
           </button>
         </div>
         <p className="muted" style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.8rem' }}>
-          Uses a mock AI provider in this demo build. No NVIDIA API key is called from the browser.
+          The Worker uses a mock AI provider unless NVIDIA_API_KEY is configured. The NVIDIA key is never sent to the browser.
         </p>
+        {startError && (
+          <p className="error-state" style={{ padding: '0.5rem 0 0', margin: 0 }}>
+            {startError}
+          </p>
+        )}
       </div>
 
-      {investigations.length === 0 && <div className="empty-state">No investigations yet.</div>}
+      {loadError && <div className="error-state">{loadError}</div>}
+      {!loadError && investigations === null && <div className="empty-state">Loading investigations…</div>}
+      {!loadError && investigations && investigations.length === 0 && <div className="empty-state">No investigations yet.</div>}
 
-      {investigations.map((inv) => (
+      {investigations?.map((inv) => (
         <div className="card" key={inv.id}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>{inv.identityName}</h3>

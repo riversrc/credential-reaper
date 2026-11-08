@@ -11,16 +11,26 @@ function formatDateTime(iso: string | null) {
 export function Remediation() {
   const [plans, setPlans] = useState<RemediationPlan[] | null>(null);
   const [simulatingId, setSimulatingId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [simulateError, setSimulateError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchRemediationPlans().then(setPlans);
+    fetchRemediationPlans()
+      .then(setPlans)
+      .catch((e) => setLoadError(String(e.message ?? e)));
   }, []);
 
   async function handleSimulate(id: string) {
     setSimulatingId(id);
-    const updated = await simulateRemediation(id);
-    setPlans((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev);
-    setSimulatingId(null);
+    setSimulateError(null);
+    try {
+      const updated = await simulateRemediation(id);
+      setPlans((prev) => prev?.map((p) => (p.id === updated.id ? updated : p)) ?? prev);
+    } catch (e) {
+      setSimulateError(String((e as Error).message ?? e));
+    } finally {
+      setSimulatingId(null);
+    }
   }
 
   return (
@@ -30,8 +40,10 @@ export function Remediation() {
         <p>Proposed retirement and migration plans. Simulation is always a dry run — no live credential is ever touched.</p>
       </div>
 
-      {!plans && <div className="empty-state">Loading remediation plans…</div>}
-      {plans && plans.length === 0 && <div className="empty-state">No remediation plans yet.</div>}
+      {loadError && <div className="error-state">{loadError}</div>}
+      {!loadError && !plans && <div className="empty-state">Loading remediation plans…</div>}
+      {!loadError && plans && plans.length === 0 && <div className="empty-state">No remediation plans yet.</div>}
+      {simulateError && <div className="error-state">{simulateError}</div>}
 
       {plans?.map((plan) => (
         <div className="card" key={plan.id}>
