@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { RemediationPlan } from '@credential-reaper/shared';
 import { fetchRemediationPlans, simulateRemediation } from '../api/client';
-import { StatusBadge } from '../components/Badges';
+import { AutomationTag, StatusBadge } from '../components/Badges';
+import { Panel } from '../components/Panel';
+import { StateMessage } from '../components/StateMessage';
 
 function formatDateTime(iso: string | null) {
   if (!iso) return '—';
@@ -37,35 +39,38 @@ export function Remediation() {
     <>
       <div className="page-header">
         <h1>Remediation</h1>
-        <p>Proposed retirement and migration plans. Simulation is always a dry run — no live credential is ever touched.</p>
+        <p>Proposed retirement and migration plans.</p>
       </div>
+      <p className="safety-line" style={{ marginBottom: '1rem' }}>
+        Simulation is always a dry run. No live credential is ever touched.
+      </p>
 
-      {loadError && <div className="error-state">{loadError}</div>}
-      {!loadError && !plans && <div className="empty-state">Loading remediation plans…</div>}
-      {!loadError && plans && plans.length === 0 && <div className="empty-state">No remediation plans yet.</div>}
-      {simulateError && <div className="error-state">{simulateError}</div>}
+      {loadError && <StateMessage kind="error">{loadError}</StateMessage>}
+      {!loadError && !plans && <StateMessage kind="loading">loading remediation plans…</StateMessage>}
+      {!loadError && plans && plans.length === 0 && <StateMessage kind="empty">no remediation plans yet.</StateMessage>}
+      {simulateError && <StateMessage kind="error">{simulateError}</StateMessage>}
 
       {plans?.map((plan) => (
-        <div className="card" key={plan.id}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>
-              {plan.identityName} — <span style={{ textTransform: 'capitalize' }}>{plan.action}</span>
-            </h3>
-            <StatusBadge status={plan.status} />
-          </div>
+        <Panel
+          key={plan.id}
+          title={
+            <>
+              {plan.identityName} — {plan.action}
+            </>
+          }
+          actions={<StatusBadge status={plan.status} />}
+        >
           <p style={{ margin: '0.5rem 0' }}>{plan.justification}</p>
-          <ol style={{ margin: '0.5rem 0 0.75rem', paddingLeft: '1.25rem' }}>
+          <ol className="steps">
             {plan.steps.map((step) => (
-              <li key={step.id} style={{ marginBottom: '0.2rem' }}>
-                {step.description}{' '}
-                <span className="muted" style={{ fontSize: '0.78rem' }}>
-                  {step.automatable ? '(automatable)' : '(manual)'}
-                </span>
+              <li key={step.id}>
+                <span className="step-text">{step.description}</span>
+                <AutomationTag automatable={step.automatable} />
               </li>
             ))}
           </ol>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span className="muted" style={{ fontSize: '0.78rem' }}>
+          <div className="plan-foot">
+            <span className="muted-sm">
               Created {formatDateTime(plan.createdAt)}
               {plan.simulatedAt ? ` · simulated ${formatDateTime(plan.simulatedAt)}` : ''}
             </span>
@@ -74,10 +79,10 @@ export function Remediation() {
               disabled={plan.status === 'simulated' || simulatingId === plan.id}
               onClick={() => handleSimulate(plan.id)}
             >
-              {simulatingId === plan.id ? 'Simulating…' : plan.status === 'simulated' ? 'Simulated ✓' : 'Simulate (dry run)'}
+              {simulatingId === plan.id ? 'Simulating…' : plan.status === 'simulated' ? 'Simulated' : 'Simulate (dry run)'}
             </button>
           </div>
-        </div>
+        </Panel>
       ))}
     </>
   );

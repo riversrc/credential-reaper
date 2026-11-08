@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { FindingBasis, Investigation, MachineIdentity } from '@credential-reaper/shared';
+import { useSearchParams } from 'react-router-dom';
+import type { Investigation, MachineIdentity } from '@credential-reaper/shared';
 import { fetchIdentities, fetchInvestigations, startInvestigation } from '../api/client';
-import { RiskBadge, StatusBadge } from '../components/Badges';
-
-const BASIS_TONE: Record<FindingBasis, string> = { confirmed: 'low', inferred: 'medium', unknown: 'neutral' };
+import { BasisTag, RiskBadge, StatusBadge } from '../components/Badges';
+import { Panel } from '../components/Panel';
+import { StateMessage } from '../components/StateMessage';
 
 const REQUESTED_BY = 'workspace.river@gmail.com';
 
@@ -17,6 +18,8 @@ export function Investigations() {
   const [investigations, setInvestigations] = useState<Investigation[] | null>(null);
   const [selectedId, setSelectedId] = useState('');
   const [starting, setStarting] = useState(false);
+  const [params] = useSearchParams();
+  const preselect = params.get('identity');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
 
@@ -24,13 +27,13 @@ export function Investigations() {
     fetchIdentities()
       .then((list) => {
         setIdentities(list);
-        setSelectedId(list[0]?.id ?? '');
+        setSelectedId(list.find((i) => i.id === preselect)?.id ?? list[0]?.id ?? '');
       })
       .catch((e) => setLoadError(String(e.message ?? e)));
     fetchInvestigations()
       .then(setInvestigations)
       .catch((e) => setLoadError(String(e.message ?? e)));
-  }, []);
+  }, [preselect]);
 
   async function handleStart() {
     if (!selectedId) return;
@@ -58,50 +61,52 @@ export function Investigations() {
         <p>Kick off an AI-assisted investigation into a machine identity, then review findings and recommendations.</p>
       </div>
 
-      <div className="card">
-        <h3>Start a new investigation</h3>
-        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
-          <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} disabled={starting}>
+      <Panel title="Start a new investigation">
+        <div className="cmdbar">
+          <span className="prompt" aria-hidden="true">
+            $
+          </span>
+          <label htmlFor="investigate-identity">investigate</label>
+          <select id="investigate-identity" value={selectedId} onChange={(e) => setSelectedId(e.target.value)} disabled={starting}>
             {identities.map((i) => (
               <option key={i.id} value={i.id}>
                 {i.name} ({i.riskLevel})
               </option>
             ))}
           </select>
-          <button className="btn" onClick={handleStart} disabled={starting || !selectedId}>
-            {starting ? 'Investigating…' : 'Start investigation'}
+          <button className="btn btn-sm" onClick={handleStart} disabled={starting || !selectedId}>
+            {starting ? 'Investigating…' : 'Run'}
           </button>
+          {starting && (
+            <span className="muted" role="status">
+              analysis in progress<span className="cursor" aria-hidden="true" />
+            </span>
+          )}
         </div>
-        <p className="muted" style={{ marginTop: '0.6rem', marginBottom: 0, fontSize: '0.8rem' }}>
+        <p className="muted-sm" style={{ marginTop: '0.6rem', marginBottom: 0 }}>
           The Netrunner agent runs on the Worker with Nemotron when NVIDIA_API_KEY is configured, otherwise with a scripted mock. The NVIDIA key is never sent to the browser.
         </p>
-        {startError && (
-          <p className="error-state" style={{ padding: '0.5rem 0 0', margin: 0 }}>
-            {startError}
-          </p>
-        )}
-      </div>
+        {startError && <StateMessage kind="error">{startError}</StateMessage>}
+      </Panel>
 
-      {loadError && <div className="error-state">{loadError}</div>}
-      {!loadError && investigations === null && <div className="empty-state">Loading investigations…</div>}
-      {!loadError && investigations && investigations.length === 0 && <div className="empty-state">No investigations yet.</div>}
+      {loadError && <StateMessage kind="error">{loadError}</StateMessage>}
+      {!loadError && investigations === null && <StateMessage kind="loading">loading investigations…</StateMessage>}
+      {!loadError && investigations && investigations.length === 0 && <StateMessage kind="empty">no investigations yet.</StateMessage>}
 
       {investigations?.map((inv) => {
         const findings = inv.findings ?? [];
         const toolTrace = inv.toolTrace ?? [];
         return (
-        <div className="card" key={inv.id}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>{inv.identityName}</h3>
-            <StatusBadge status={inv.status} />
-          </div>
-          <p className="muted" style={{ fontSize: '0.8rem', margin: '0.35rem 0 0.75rem' }}>
+        <Panel key={inv.id} title={inv.identityName} actions={<StatusBadge status={inv.status} />}>
+          <p className="muted-sm" style={{ margin: '0 0 0.75rem' }}>
             Requested by {inv.requestedBy} · started {formatDateTime(inv.startedAt)}
             {inv.completedAt ? ` · completed ${formatDateTime(inv.completedAt)}` : ''} · source: {inv.source}
           </p>
 
-          {inv.status === 'running' && <p className="muted">Analysis in progress…</p>}
-          {inv.status === 'failed' && inv.aiSummary && <p className="error-state" style={{ padding: 0 }}>{inv.aiSummary}</p>}
+          {inv.status === 'running' && (
+            <StateMessage kind="loading">analysis in progress…</StateMessage>
+          )}
+          {inv.status === 'failed' && inv.aiSummary && <StateMessage kind="error">{inv.aiSummary}</StateMessage>}
 
           {inv.status === 'completed' && (
             <>
@@ -112,7 +117,7 @@ export function Investigations() {
                     <span className="muted">Risk score (computed by the backend, not the AI):</span>{' '}
                     <strong>{inv.riskAssessment.score}/100</strong> <RiskBadge level={inv.riskAssessment.level} />
                   </summary>
-                  <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
+                  <ul className="trace">
                     {(inv.riskAssessment.factors ?? []).map((factor) => (
                       <li key={factor}>{factor}</li>
                     ))}
@@ -125,7 +130,7 @@ export function Investigations() {
                 </p>
               )}
               {findings.length > 0 && (
-                <table>
+                <div className="table-wrap"><table>
                   <thead>
                     <tr>
                       <th>Severity</th>
@@ -137,20 +142,20 @@ export function Investigations() {
                   </thead>
                   <tbody>
                     {findings.map((f) => (
-                      <tr key={f.id} style={{ cursor: 'default' }}>
+                      <tr key={f.id} className="row-static">
                         <td>
                           <RiskBadge level={f.severity === 'info' ? 'low' : f.severity} />
                         </td>
                         <td className="muted">{f.category}</td>
                         <td>
-                          <span className={`badge badge-${BASIS_TONE[f.basis]}`}>{f.basis}</span>
+                          <BasisTag basis={f.basis} />
                         </td>
                         <td>{f.description}</td>
                         <td className="mono muted">{f.evidence}</td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </table></div>
               )}
             </>
           )}
@@ -158,16 +163,16 @@ export function Investigations() {
           {toolTrace.length > 0 && (
             <details style={{ marginTop: '0.75rem' }}>
               <summary className="muted">Agent tool calls ({toolTrace.length})</summary>
-              <ul className="mono muted" style={{ fontSize: '0.8rem' }}>
+              <ul className="trace">
                 {toolTrace.map((call) => (
                   <li key={call.seq}>
-                    {call.seq}. {call.tool} [{call.status}] {call.summary} ({call.durationMs}ms)
+                    {call.seq}. {call.tool} <span className={`st-${call.status}`}>[{call.status}]</span> {call.summary} ({call.durationMs}ms)
                   </li>
                 ))}
               </ul>
             </details>
           )}
-        </div>
+        </Panel>
         );
       })}
     </>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { AuditEvent } from '@credential-reaper/shared';
 import { fetchAuditEvents } from '../api/client';
+import { Panel } from '../components/Panel';
+import { StateMessage } from '../components/StateMessage';
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -23,6 +25,9 @@ const actionLabels: Record<AuditEvent['action'], string> = {
   'identity-retired': 'Identity retired',
 };
 
+const markerClass = (action: AuditEvent['action']) =>
+  action === 'investigation-failed' || action === 'remediation-rejected' ? 'tl-bad' : action === 'identity-retired' || action === 'remediation-proposed' ? 'tl-warn' : '';
+
 export function TheAfterlife() {
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,30 +45,26 @@ export function TheAfterlife() {
         <p>Investigation history and audit trail — every action taken against a machine identity.</p>
       </div>
 
-      {error && <div className="error-state">{error}</div>}
-      {!error && !events && <div className="empty-state">Loading audit history…</div>}
-      {!error && events && events.length === 0 && <div className="empty-state">No audit events yet.</div>}
+      {error && <StateMessage kind="error">{error}</StateMessage>}
+      {!error && !events && <StateMessage kind="loading">loading audit history…</StateMessage>}
+      {!error && events && events.length === 0 && <StateMessage kind="empty">no audit events yet.</StateMessage>}
 
       {events && events.length > 0 && (
-        <div className="card">
+        <Panel title={`Audit trail · ${events.length} events`}>
           <ul className="timeline">
             {events.map((event) => (
-              <li key={event.id}>
+              <li key={event.id} className={markerClass(event.action)}>
                 <div className="ts">{formatDateTime(event.timestamp)}</div>
-                <div>
-                  <strong>{actionLabels[event.action]}</strong>
-                  {event.identityName && <> — {event.identityName}</>}
+                <div className="tl-title">
+                  {actionLabels[event.action]}
+                  {event.identityName && <span className="muted"> — {event.identityName}</span>}
                 </div>
-                <div className="muted" style={{ fontSize: '0.85rem' }}>
-                  {event.details}
-                </div>
-                <div className="muted" style={{ fontSize: '0.78rem' }}>
-                  by {event.actor}
-                </div>
+                <div style={{ fontSize: '0.82rem' }}>{event.details}</div>
+                <div className="muted-sm">by {event.actor}</div>
               </li>
             ))}
           </ul>
-        </div>
+        </Panel>
       )}
     </>
   );
